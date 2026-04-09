@@ -1,0 +1,24 @@
+{
+  "default_backend": "deepgram",
+  "language": "en",
+  "keyterms": [
+    "OpenAI", "Claude", "Anthropic", "GPT-4", "Whisper", "Deepgram",
+    "ElevenLabs", "Scribe",
+    "GitHub", "Docker", "Kubernetes", "Cloudflare", "Vercel",
+    "PostgreSQL", "Redis", "MongoDB",
+    "TypeScript", "JavaScript", "Golang", "React", "Next.js",
+    "GraphQL", "WebSocket", "FastAPI", "Express"
+  ],
+  "replacements": {
+    "high key": "Haiku",
+    "high-key": "Haiku",
+    "code rabbit": "CodeRabbit",
+    "11 labs": "ElevenLabs",
+    "eleven labs": "ElevenLabs"
+  },
+  "api_keys": {
+    "deepgram": "",
+    "openai": "",
+    "elevenlabs": ""
+  }
+}

@@ -1,0 +1,18 @@
+# Binary
+stt-go.exe
+stt-go.exe~
+stt-go-old.exe
+
+# Runtime files
+stt-go.log
+stt-go.log.*
+config.json
+mismatches.jsonl
+
+# Audio directories
+debug-audio/
+failed-audio/
+
+# OS
+*.log.gz
+stderr.log

@@ -1,0 +1,40 @@
+version: 2
+
+builds:
+  - id: stt-go
+    main: .
+    binary: stt-go
+    goos:
+      - windows
+    goarch:
+      - amd64
+    ldflags:
+      - -H windowsgui
+      - -s -w
+
+archives:
+  - id: stt-go
+    builds:
+      - stt-go
+    format: zip
+    name_template: "stt-go_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - config.example.json
+      - icon.ico
+
+release:
+  github:
+    owner: manishsparihar32
+    name: stt-go
+  draft: false
+  prerelease: auto
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
