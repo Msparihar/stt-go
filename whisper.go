@@ -75,25 +75,24 @@ func typeText(text string, targetHwnd uintptr, log *slog.Logger) {
 	log.Info("[TYPE] typeText: pre-type delay", "delay", preTypeDelay)
 	time.Sleep(preTypeDelay)
 
-	failCount := 0
-	for i, ch := range text {
-		var inp [2]kbInput
-		inp[0] = kbInput{typ: inputKbd, scan: uint16(ch), flags: kfUnicode}
-		inp[1] = kbInput{typ: inputKbd, scan: uint16(ch), flags: kfUnicode | kfKeyup}
-		ret, _, _ := pSendInput.Call(2, uintptr(unsafe.Pointer(&inp[0])), unsafe.Sizeof(inp[0]))
-		if ret == 0 {
-			failCount++
-			if failCount <= 5 { // log first 5 failures to avoid spam
-				log.Error("[TYPE] typeText: SendInput failed", "charIndex", i, "char", string(ch), "charCode", int(ch))
-			}
-		}
-		time.Sleep(time.Millisecond)
+	runes := []rune(text)
+	inputs := make([]kbInput, 0, 2*len(runes))
+	for _, ch := range runes {
+		inputs = append(inputs,
+			kbInput{typ: inputKbd, scan: uint16(ch), flags: kfUnicode},
+			kbInput{typ: inputKbd, scan: uint16(ch), flags: kfUnicode | kfKeyup},
+		)
 	}
 
-	if failCount > 0 {
-		log.Error("[TYPE] typeText: SendInput failures", "failed", failCount, "total", len([]rune(text)))
+	if len(inputs) == 0 {
+		return
+	}
+
+	ret, _, _ := pSendInput.Call(uintptr(len(inputs)), uintptr(unsafe.Pointer(&inputs[0])), unsafe.Sizeof(inputs[0]))
+	if ret == 0 {
+		log.Error("[TYPE] typeText: SendInput failed", "chars", len(runes))
 	} else {
-		log.Info("[TYPE] typeText: completed successfully", "chars", len([]rune(text)))
+		log.Info("[TYPE] typeText: completed successfully", "chars", len(runes))
 	}
 }
 

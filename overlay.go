@@ -194,13 +194,19 @@ type waveOverlay struct {
 	bars     [barCount]float32
 }
 
-var globalOverlay *waveOverlay
+var (
+	globalOverlay   *waveOverlay
+	globalOverlayMu sync.RWMutex
+)
 
 func waveWndProc(hwnd, umsg, wparam, lparam uintptr) uintptr {
 	switch umsg {
 	case wmPaint:
-		if globalOverlay != nil {
-			globalOverlay.paint()
+		globalOverlayMu.RLock()
+		ov := globalOverlay
+		globalOverlayMu.RUnlock()
+		if ov != nil {
+			ov.paint()
 		}
 		var ps paintStruct
 		pBeginPaint.Call(hwnd, uintptr(unsafe.Pointer(&ps)))
@@ -210,14 +216,20 @@ func waveWndProc(hwnd, umsg, wparam, lparam uintptr) uintptr {
 		pShowWindow.Call(hwnd, swShow)
 		return 0
 	case wmHideOverlay:
-		if globalOverlay != nil {
-			globalOverlay.resizeWindow(overlayW, overlayH)
+		globalOverlayMu.RLock()
+		ov := globalOverlay
+		globalOverlayMu.RUnlock()
+		if ov != nil {
+			ov.resizeWindow(overlayW, overlayH)
 		}
 		pShowWindow.Call(hwnd, swHide)
 		return 0
 	case wmShowTranscribing:
-		if globalOverlay != nil {
-			globalOverlay.resizeWindow(transcribeW, transcribeH)
+		globalOverlayMu.RLock()
+		ov := globalOverlay
+		globalOverlayMu.RUnlock()
+		if ov != nil {
+			ov.resizeWindow(transcribeW, transcribeH)
 		}
 		return 0
 	case wmRedrawWave:
@@ -230,7 +242,9 @@ func waveWndProc(hwnd, umsg, wparam, lparam uintptr) uintptr {
 
 func newWaveOverlay(log *slog.Logger) *waveOverlay {
 	w := &waveOverlay{log: log}
+	globalOverlayMu.Lock()
 	globalOverlay = w
+	globalOverlayMu.Unlock()
 	go w.runMessageLoop()
 	for i := 0; i < 200; i++ {
 		time.Sleep(10 * time.Millisecond)
