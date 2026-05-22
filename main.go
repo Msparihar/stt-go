@@ -165,7 +165,7 @@ func readEnvKey(name string) string {
 
 func main() {
 	setup := flag.Bool("setup", false, "Run interactive setup wizard")
-	backendFlag := flag.String("backend", "", "Transcription backend: api, deepgram, elevenlabs (overrides config)")
+	backendFlag := flag.String("backend", "", "Transcription backend: api, deepgram, elevenlabs, elevenlabs_batch, whisper_stream, whisper_realtime (overrides config)")
 	lang := flag.String("language", "", "Language code (overrides config)")
 	noTray := flag.Bool("no-tray", false, "Disable system tray icon")
 	flag.Parse()
@@ -215,6 +215,23 @@ func main() {
 
 	svc := newSTTService(backend, language, log)
 	svc.overlay = newWaveOverlay(log)
+
+	// Resolve saved mic preference
+	if appConfig.MicDevice != "" {
+		mics := listMics()
+		found := false
+		for _, m := range mics {
+			if m.Name == appConfig.MicDevice {
+				svc.rec.setDeviceID(m.ID)
+				log.Info("[CFG] Using saved microphone", "name", m.Name, "id", m.ID)
+				found = true
+				break
+			}
+		}
+		if !found {
+			log.Warn("[CFG] Saved microphone not found, using system default", "saved", appConfig.MicDevice)
+		}
+	}
 
 	// Clean up files older than 7 days
 	cleanupOldFiles(log)

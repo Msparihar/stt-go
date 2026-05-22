@@ -16,6 +16,7 @@ import (
 type Config struct {
 	DefaultBackend string            `json:"default_backend"` // "deepgram", "elevenlabs", "api"
 	Language       string            `json:"language"`
+	MicDevice      string            `json:"mic_device,omitempty"` // saved mic name, empty = system default
 	Keyterms       []string          `json:"keyterms"`
 	Replacements   map[string]string `json:"replacements"` // from -> to
 	APIKeys        struct {
@@ -37,20 +38,20 @@ func loadConfig(log *slog.Logger) *Config {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Info("config.json not found, creating default config", "path", path)
+			log.Info("[CFG] config.json not found, creating default config", "path", path)
 			cfg := defaultConfig()
 			if saveErr := saveConfig(cfg); saveErr != nil {
-				log.Warn("Failed to save default config", "err", saveErr)
+				log.Warn("[CFG] Failed to save default config", "err", saveErr)
 			}
 			return cfg
 		}
-		log.Warn("Failed to read config.json, using defaults", "err", err)
+		log.Warn("[CFG] Failed to read config.json, using defaults", "err", err)
 		return defaultConfig()
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		log.Warn("Failed to parse config.json, using defaults", "err", err)
+		log.Warn("[CFG] Failed to parse config.json, using defaults", "err", err)
 		return defaultConfig()
 	}
 
@@ -69,7 +70,7 @@ func loadConfig(log *slog.Logger) *Config {
 		cfg.Replacements = def.Replacements
 	}
 
-	log.Info("Config loaded", "path", path, "backend", cfg.DefaultBackend, "language", cfg.Language)
+	log.Info("[CFG] Config loaded", "path", path, "backend", cfg.DefaultBackend, "language", cfg.Language)
 	return &cfg
 }
 
@@ -167,16 +168,25 @@ func runSetup(log *slog.Logger) {
 
 	// Ask backend
 	fmt.Println("Available backends:")
-	fmt.Println("  1. deepgram   — Deepgram Nova-3 (recommended, fast streaming)")
-	fmt.Println("  2. elevenlabs — ElevenLabs Scribe (high accuracy)")
-	fmt.Println("  3. api        — OpenAI Whisper (offline-friendly, slower)")
+	fmt.Println("  1. deepgram        — Deepgram Nova-3 (recommended, fast streaming)")
+	fmt.Println("  2. elevenlabs       — ElevenLabs Scribe streaming (low latency, 50-char hint)")
+	fmt.Println("  3. elevenlabs_batch — ElevenLabs Scribe REST batch (full keyterms, slower)")
+	fmt.Println("  4. api              — OpenAI Whisper REST (offline-friendly, slower)")
+	fmt.Println("  5. whisper_stream   — OpenAI gpt-4o-mini-transcribe with SSE streaming")
+	fmt.Println("  6. whisper_realtime — OpenAI Realtime API via WebSocket")
 	fmt.Println()
 	backendInput := readLine("Default backend [deepgram]: ")
 	switch backendInput {
 	case "elevenlabs", "2":
 		cfg.DefaultBackend = "elevenlabs"
-	case "api", "whisper", "3":
+	case "elevenlabs_batch", "elbatch", "batch", "3":
+		cfg.DefaultBackend = "elevenlabs_batch"
+	case "api", "whisper", "4":
 		cfg.DefaultBackend = "api"
+	case "whisper_stream", "stream", "5":
+		cfg.DefaultBackend = "whisper_stream"
+	case "whisper_realtime", "realtime", "rt", "6":
+		cfg.DefaultBackend = "whisper_realtime"
 	default:
 		cfg.DefaultBackend = "deepgram"
 	}
@@ -193,7 +203,7 @@ func runSetup(log *slog.Logger) {
 		if key != "" {
 			cfg.APIKeys.Deepgram = key
 		}
-	case "elevenlabs":
+	case "elevenlabs", "elevenlabs_batch":
 		key := readLine("ElevenLabs API key: ")
 		if key != "" {
 			cfg.APIKeys.ElevenLabs = key

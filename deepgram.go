@@ -58,8 +58,13 @@ type dgConn struct {
 	session atomic.Int64  // incremented on each startRecording; stale goroutines check this
 
 	// audio buffer — holds chunks until WebSocket is ready
-	bufMu  sync.Mutex
-	buffer [][]byte
+	bufMu     sync.Mutex
+	buffer    [][]byte
+	sendCount atomic.Int64 // counts send() calls for periodic buffer logging
+
+	// byte accounting — used to detect partial-coverage (Option A incompleteness check)
+	bytesRecorded atomic.Int64 // total PCM bytes passed to send() this session
+	bytesSent     atomic.Int64 // PCM bytes actually written to the websocket
 
 	// per-recording state
 	recMu      sync.Mutex
@@ -109,27 +114,27 @@ func (dc *dgConn) close() {
 	}
 	dc.ready = false
 	dc.mu.Unlock()
-	dc.log.Info("Deepgram connection closed")
+	dc.log.Info("[DG] Deepgram connection closed")
 }
 
 // connect dials Deepgram and flushes buffered audio once connected.
 // Called once per recording session. mySession identifies which session
 // spawned this goroutine — if the session has moved on, we bail out.
 func (dc *dgConn) connect(mySession int64) {
-	dc.log.Info("Deepgram connecting...")
+	dc.log.Info("[DG] Deepgram connecting...")
 	t0 := time.Now()
 
 	conn, _, err := ipv4Dialer.Dial(dc.wsURL, http.Header{
 		"Authorization": {"Token " + dc.apiKey},
 	})
 	if err != nil {
-		dc.log.Error("Deepgram connect failed", "err", err, "elapsed", time.Since(t0).Round(time.Millisecond))
+		dc.log.Error("[DG] Deepgram connect failed", "err", err, "elapsed", time.Since(t0).Round(time.Millisecond))
 		return
 	}
 
 	// Check if this session is still current before touching shared state
 	if dc.session.Load() != mySession {
-		dc.log.Warn("Deepgram stale connect goroutine, closing connection", "mySession", mySession, "currentSession", dc.session.Load())
+		dc.log.Warn("[DG] Deepgram stale connect goroutine, closing connection", "mySession", mySession, "currentSession", dc.session.Load())
 		conn.Close()
 		return
 	}
@@ -138,7 +143,7 @@ func (dc *dgConn) connect(mySession int64) {
 	dc.conn = conn
 	dc.ready = true
 	dc.mu.Unlock()
-	dc.log.Info("Deepgram connected", "elapsed", time.Since(t0).Round(time.Millisecond))
+	dc.log.Info("[DG] Deepgram connected", "elapsed", time.Since(t0).Round(time.Millisecond))
 
 	// Signal that connection is ready
 	close(dc.readyCh)
@@ -150,15 +155,19 @@ func (dc *dgConn) connect(mySession int64) {
 	dc.bufMu.Unlock()
 
 	if len(buffered) > 0 {
+		var flushedBytes int64
 		dc.mu.Lock()
 		for _, chunk := range buffered {
-			conn.WriteMessage(websocket.BinaryMessage, chunk)
+			if err := conn.WriteMessage(websocket.BinaryMessage, chunk); err == nil {
+				flushedBytes += int64(len(chunk))
+			}
 		}
 		dc.mu.Unlock()
+		dc.bytesSent.Add(flushedBytes)
 		dc.recMu.Lock()
 		dc.flushTime = time.Now()
 		dc.recMu.Unlock()
-		dc.log.Info("Deepgram flushed buffered audio", "chunks", len(buffered))
+		dc.log.Info("[DG] Deepgram flushed buffered audio", "chunks", len(buffered), "bytes", flushedBytes)
 	}
 
 	// Read loop runs until connection drops or session ends
@@ -192,7 +201,7 @@ func (dc *dgConn) readLoop(conn *websocket.Conn) {
 			// Connection closed (expected after CloseStream) — signal recDone
 			dc.recMu.Lock()
 			if dc.recActive && dc.finalizing {
-				dc.log.Info("Deepgram readLoop: connection closed after CloseStream, signaling done",
+				dc.log.Info("[DG] Deepgram readLoop: connection closed after CloseStream, signaling done",
 					"parts_collected", len(dc.recParts))
 				close(dc.recDone)
 				dc.recActive = false
@@ -211,7 +220,7 @@ func (dc *dgConn) readLoop(conn *websocket.Conn) {
 		if len(r.Channel.Alternatives) > 0 {
 			transcript = r.Channel.Alternatives[0].Transcript
 		}
-		dc.log.Info("Deepgram msg",
+		dc.log.Info("[DG] Deepgram msg",
 			"type", r.Type,
 			"is_final", r.IsFinal,
 			"speech_finalized", r.SpeechFinalized,
@@ -237,6 +246,7 @@ func (dc *dgConn) readLoop(conn *websocket.Conn) {
 func (dc *dgConn) startRecording() {
 	// Bump session so any in-flight connect goroutine knows it's stale
 	sess := dc.session.Add(1)
+	dc.log.Info("[DG] startRecording", "session", sess)
 
 	// Reset per-recording state
 	dc.recMu.Lock()
@@ -253,8 +263,12 @@ func (dc *dgConn) startRecording() {
 	dc.buffer = nil
 	dc.bufMu.Unlock()
 
+	dc.bytesRecorded.Store(0)
+	dc.bytesSent.Store(0)
+
 	dc.mu.Lock()
 	if dc.conn != nil {
+		dc.log.Info("[DG] closing previous connection before new session", "session", sess)
 		dc.conn.Close()
 		dc.conn = nil
 	}
@@ -268,6 +282,8 @@ func (dc *dgConn) startRecording() {
 
 // send streams a PCM chunk to Deepgram, or buffers it if not yet connected.
 func (dc *dgConn) send(data []byte) {
+	dc.bytesRecorded.Add(int64(len(data)))
+
 	dc.mu.Lock()
 	conn := dc.conn
 	ready := dc.ready
@@ -279,24 +295,42 @@ func (dc *dgConn) send(data []byte) {
 		copy(chunk, data)
 		dc.bufMu.Lock()
 		dc.buffer = append(dc.buffer, chunk)
+		bufLen := len(dc.buffer)
 		dc.bufMu.Unlock()
+		n := dc.sendCount.Add(1)
+		if n%10 == 0 {
+			dc.log.Info("[DG] buffering audio (not yet connected)", "chunks_buffered", bufLen, "send_calls", n)
+		}
 		return
 	}
 
 	dc.mu.Lock()
-	conn.WriteMessage(websocket.BinaryMessage, data)
+	err := conn.WriteMessage(websocket.BinaryMessage, data)
 	dc.mu.Unlock()
+	if err == nil {
+		dc.bytesSent.Add(int64(len(data)))
+	}
 }
 
 // finalize signals end of utterance, waits for final transcript, then closes connection.
-func (dc *dgConn) finalize(t0 time.Time) string {
+// If ctx is cancelled (e.g. because a REST backend already won the race), the
+// function returns whatever transcript has accumulated so far and closes the
+// connection. The connect-wait and post-close waits both honor ctx.
+func (dc *dgConn) finalize(ctx context.Context, t0 time.Time) string {
 	finishStart := time.Now()
+	dc.log.Info("[DG] finalize started", "elapsed_since_press", time.Since(t0).Round(time.Millisecond))
 
-	// Wait for connection if still connecting (with timeout)
+	// Wait for connection if still connecting, honoring ctx + 5s cap
+	connectCtx, connectCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer connectCancel()
 	select {
 	case <-dc.readyCh:
-	case <-time.After(5 * time.Second):
-		dc.log.Warn("Deepgram connect timeout during finalize")
+	case <-connectCtx.Done():
+		if ctx.Err() != nil {
+			dc.log.Info("[DG] finalize cancelled before connect (race already won)")
+		} else {
+			dc.log.Warn("[DG] Deepgram connect timeout during finalize")
+		}
 		dc.recMu.Lock()
 		dc.dropped = true
 		dc.recMu.Unlock()
@@ -314,7 +348,7 @@ func (dc *dgConn) finalize(t0 time.Time) string {
 	dc.recMu.Unlock()
 
 	if !ready || conn == nil {
-		dc.log.Warn("Deepgram not connected at finalize")
+		dc.log.Warn("[DG] Deepgram not connected at finalize")
 		dc.recMu.Lock()
 		dc.dropped = true
 		dc.recMu.Unlock()
@@ -331,10 +365,18 @@ func (dc *dgConn) finalize(t0 time.Time) string {
 	dc.mu.Lock()
 	conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"CloseStream"}`))
 	dc.mu.Unlock()
+	dc.log.Info("[DG] CloseStream sent")
 
+	// Wait for final results to arrive, but bail out if the caller cancels
+	// (meaning: a REST backend already won and we'd just be wasting time).
+	waitCtx, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer waitCancel()
 	select {
 	case <-doneCh:
-	case <-time.After(5 * time.Second):
+	case <-waitCtx.Done():
+		if ctx.Err() != nil {
+			dc.log.Info("[DG] finalize cancelled mid-wait (race already won)")
+		}
 		dc.recMu.Lock()
 		dc.recActive = false
 		dc.finalizing = false
@@ -345,12 +387,30 @@ func (dc *dgConn) finalize(t0 time.Time) string {
 	text := strings.Join(dc.recParts, " ")
 	dc.recMu.Unlock()
 
+	// Coverage check: if Deepgram didn't receive most of the recorded audio
+	// (slow connect, mid-recording cancellation arriving before final results,
+	// or buffer loss), treat this as "dropped" so the race prefers the REST
+	// fallbacks instead of typing a half transcript. Threshold: 90%.
+	recorded := dc.bytesRecorded.Load()
+	sent := dc.bytesSent.Load()
+	if recorded > 0 {
+		coverage := float64(sent) / float64(recorded)
+		if coverage < 0.90 {
+			dc.recMu.Lock()
+			dc.dropped = true
+			dc.recMu.Unlock()
+			dc.log.Warn("[DG] Deepgram partial coverage — marking dropped",
+				"bytes_sent", sent, "bytes_recorded", recorded,
+				"coverage_pct", fmt.Sprintf("%.1f", coverage*100))
+		}
+	}
+
 	postRelease := time.Since(finishStart)
 	session := time.Since(t0)
 	if text != "" {
-		dc.log.Info("Deepgram transcription", "post_release", postRelease.Round(time.Millisecond), "session", session.Round(time.Millisecond), "text", text)
+		dc.log.Info("[DG] Deepgram transcription", "post_release", postRelease.Round(time.Millisecond), "session", session.Round(time.Millisecond), "text", text, "bytes_sent", sent, "bytes_recorded", recorded)
 	} else {
-		dc.log.Info("Deepgram: no speech detected", "session", session.Round(time.Millisecond))
+		dc.log.Info("[DG] Deepgram: no speech detected", "session", session.Round(time.Millisecond))
 	}
 
 	// Close connection — next recording will open a fresh one

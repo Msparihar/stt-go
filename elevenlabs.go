@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"log/slog"
@@ -59,6 +60,7 @@ type elConn struct {
 	recActive  bool
 	committed  bool // true after commit sent
 	firstChunk bool // true until first audio chunk is sent
+	dropped    bool // true if WS connection died mid-recording (before clean commit)
 }
 
 func newELConn(apiKey, lang string, log *slog.Logger) *elConn {
@@ -82,37 +84,50 @@ func (ec *elConn) close() {
 	}
 	ec.ready = false
 	ec.mu.Unlock()
-	ec.log.Info("ElevenLabs connection closed")
+	ec.log.Info("[EL] connection closed")
 }
 
 func (ec *elConn) connect(mySession int64) {
-	ec.log.Info("ElevenLabs connecting...")
+	ec.log.Info("[EL] connecting...")
 	t0 := time.Now()
 
 	conn, _, err := ipv4Dialer.Dial(ec.wsURL, http.Header{
 		"xi-api-key": {ec.apiKey},
 	})
 	if err != nil {
-		ec.log.Error("ElevenLabs connect failed", "err", err, "elapsed", time.Since(t0).Round(time.Millisecond))
+		ec.log.Error("[EL] connect failed", "err", err, "elapsed", time.Since(t0).Round(time.Millisecond))
+		ec.recMu.Lock()
+		if ec.recActive {
+			ec.dropped = true
+			close(ec.recDone)
+			ec.recActive = false
+		}
+		ec.recMu.Unlock()
+		// Unblock anyone waiting on readyCh
+		select {
+		case <-ec.readyCh:
+		default:
+			close(ec.readyCh)
+		}
 		return
 	}
 
 	// Wait for session_started message
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
-		ec.log.Error("ElevenLabs failed to read session_started", "err", err)
+		ec.log.Error("[EL] failed to read session_started", "err", err)
 		conn.Close()
 		return
 	}
 	var initMsg elRecvMsg
 	json.Unmarshal(msg, &initMsg)
 	if initMsg.MessageType != "session_started" {
-		ec.log.Warn("ElevenLabs unexpected first message", "type", initMsg.MessageType)
+		ec.log.Warn("[EL] unexpected first message", "type", initMsg.MessageType)
 	}
 
 	// Check if still current session
 	if ec.session.Load() != mySession {
-		ec.log.Warn("ElevenLabs stale connect goroutine, closing", "mySession", mySession)
+		ec.log.Warn("[EL] stale connect goroutine, closing", "mySession", mySession)
 		conn.Close()
 		return
 	}
@@ -121,7 +136,7 @@ func (ec *elConn) connect(mySession int64) {
 	ec.conn = conn
 	ec.ready = true
 	ec.mu.Unlock()
-	ec.log.Info("ElevenLabs connected", "elapsed", time.Since(t0).Round(time.Millisecond))
+	ec.log.Info("[EL] connected", "elapsed", time.Since(t0).Round(time.Millisecond))
 
 	close(ec.readyCh)
 
@@ -144,7 +159,7 @@ func (ec *elConn) connect(mySession int64) {
 			}
 		}
 		ec.mu.Unlock()
-		ec.log.Info("ElevenLabs flushed buffered audio", "chunks", len(buffered))
+		ec.log.Info("[EL] flushed buffered audio", "chunks", len(buffered))
 	}
 
 	// Read loop
@@ -159,8 +174,13 @@ func (ec *elConn) connect(mySession int64) {
 	ec.conn = nil
 	ec.mu.Unlock()
 
+	// readLoop returned. If recording is still active, the WS died before
+	// a clean commit — flag dropped so the race prefers REST fallbacks.
 	ec.recMu.Lock()
 	if ec.recActive {
+		ec.dropped = true
+		ec.log.Warn("[EL] WS dropped mid-recording — flagging for REST fallback",
+			"parts_collected", len(ec.recParts))
 		close(ec.recDone)
 		ec.recActive = false
 		ec.committed = false
@@ -210,8 +230,19 @@ func (ec *elConn) readLoop(conn *websocket.Conn) {
 				ec.committed = false
 			}
 			ec.recMu.Unlock()
-		case "input_error":
-			ec.log.Error("ElevenLabs input error", "error", r.Error)
+		case "error":
+			ec.log.Error("[EL] server error", "code", r.Error)
+			// Unblock finalize() so it doesn't sit waiting on recDone
+			// for a commit that will never arrive. Flag dropped so the
+			// race prefers REST fallbacks over the (likely empty) result.
+			ec.recMu.Lock()
+			if ec.recActive {
+				ec.dropped = true
+				close(ec.recDone)
+				ec.recActive = false
+				ec.committed = false
+			}
+			ec.recMu.Unlock()
 		}
 	}
 }
@@ -225,6 +256,7 @@ func (ec *elConn) startRecording() {
 	ec.recActive = true
 	ec.committed = false
 	ec.firstChunk = true
+	ec.dropped = false
 	ec.recMu.Unlock()
 
 	ec.bufMu.Lock()
@@ -275,13 +307,26 @@ func (ec *elConn) send(data []byte) {
 	ec.mu.Unlock()
 }
 
-func (ec *elConn) finalize(t0 time.Time) string {
+// finalize signals end of utterance and waits for the committed transcript.
+// Honors ctx: if cancelled (e.g. REST backend already won the race), returns
+// whatever has accumulated and closes the connection.
+func (ec *elConn) finalize(ctx context.Context, t0 time.Time) string {
 	finishStart := time.Now()
 
+	connectCtx, connectCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer connectCancel()
 	select {
 	case <-ec.readyCh:
-	case <-time.After(5 * time.Second):
-		ec.log.Warn("ElevenLabs connect timeout during finalize")
+	case <-connectCtx.Done():
+		if ctx.Err() != nil {
+			ec.log.Info("[EL] finalize cancelled before connect (race already won)")
+		} else {
+			ec.log.Warn("[EL] connect timeout during finalize")
+			ec.recMu.Lock()
+			ec.dropped = true
+			ec.recActive = false
+			ec.recMu.Unlock()
+		}
 		ec.close()
 		return ""
 	}
@@ -296,7 +341,7 @@ func (ec *elConn) finalize(t0 time.Time) string {
 	ec.recMu.Unlock()
 
 	if !ready || conn == nil {
-		ec.log.Warn("ElevenLabs not connected at finalize")
+		ec.log.Warn("[EL] not connected at finalize")
 		return ""
 	}
 
@@ -310,9 +355,19 @@ func (ec *elConn) finalize(t0 time.Time) string {
 	ec.writeAudioChunk(conn, nil, true, "")
 	ec.mu.Unlock()
 
+	waitCtx, waitCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer waitCancel()
 	select {
 	case <-doneCh:
-	case <-time.After(3 * time.Second):
+	case <-waitCtx.Done():
+		if ctx.Err() != nil {
+			ec.log.Info("[EL] finalize cancelled mid-wait (race already won)")
+		} else {
+			ec.log.Warn("[EL] commit-wait timeout — no committed_transcript arrived")
+			ec.recMu.Lock()
+			ec.dropped = true
+			ec.recMu.Unlock()
+		}
 		ec.recMu.Lock()
 		ec.recActive = false
 		ec.committed = false
@@ -326,11 +381,21 @@ func (ec *elConn) finalize(t0 time.Time) string {
 	postRelease := time.Since(finishStart)
 	session := time.Since(t0)
 	if text != "" {
-		ec.log.Info("ElevenLabs transcription", "post_release", postRelease.Round(time.Millisecond), "session", session.Round(time.Millisecond), "text", text)
+		ec.log.Info("[EL] transcription", "post_release", postRelease.Round(time.Millisecond), "session", session.Round(time.Millisecond), "text", text)
 	} else {
-		ec.log.Info("ElevenLabs: no speech detected", "session", session.Round(time.Millisecond))
+		ec.log.Info("[EL] no speech detected", "session", session.Round(time.Millisecond))
 	}
 
 	ec.close()
 	return text
+}
+
+// wasDropped reports whether the WebSocket died before producing a clean
+// committed_transcript for the active recording. Used by raceTranscribe to
+// prefer REST fallbacks (which read the full local PCM buffer) over a
+// partial streaming transcript.
+func (ec *elConn) wasDropped() bool {
+	ec.recMu.Lock()
+	defer ec.recMu.Unlock()
+	return ec.dropped
 }
