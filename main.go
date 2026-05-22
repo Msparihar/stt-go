@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -158,6 +159,7 @@ func readEnvKey(name string) string {
 			return strings.TrimSpace(strings.SplitN(line, "=", 2)[1])
 		}
 	}
+	log.Printf("[CONFIG] no key found for %s in env/.env/.env.local", name)
 	return ""
 }
 

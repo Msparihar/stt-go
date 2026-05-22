@@ -237,6 +237,13 @@ func saveDIBtoPNG(format uintptr, log *slog.Logger) (string, error) {
 
 	width := int(hdr.Width)
 	height := int(hdr.Height)
+	rawHeight := hdr.Height
+	if rawHeight < 0 {
+		rawHeight = -rawHeight
+	}
+	if width <= 0 || rawHeight <= 0 || width > 32768 || rawHeight > 32768 || int64(width)*int64(rawHeight) > 100_000_000 {
+		return "", fmt.Errorf("dib dimensions out of bounds: %dx%d", width, height)
+	}
 	bottomUp := true
 	if height < 0 {
 		height = -height

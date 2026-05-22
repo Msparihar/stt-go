@@ -211,7 +211,8 @@ func (dc *dgConn) readLoop(conn *websocket.Conn) {
 			return
 		}
 		var r dgResult
-		if json.Unmarshal(msg, &r) != nil {
+		if err := json.Unmarshal(msg, &r); err != nil {
+			dc.log.Error("[DG] unmarshal failed", "err", err, "payload", fmt.Sprintf("%.200q", string(msg)))
 			continue
 		}
 

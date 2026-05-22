@@ -158,7 +158,10 @@ func transcribeWhisper(ctx context.Context, pcm []byte, apiKey, lang string, log
 	}
 
 	var res struct{ Text string }
-	json.Unmarshal(rb, &res)
+	if err := json.Unmarshal(rb, &res); err != nil {
+		log.Error("[WHISPER] unmarshal failed", "err", err, "body", fmt.Sprintf("%.200q", string(rb)))
+		return "", fmt.Errorf("unmarshal response: %w", err)
+	}
 	text := strings.TrimSpace(res.Text)
 	log.Info("[WH] Whisper API", "elapsed", time.Since(t0).Round(time.Millisecond), "text", text)
 	return text, nil
@@ -205,7 +208,10 @@ func transcribeElevenLabsREST(ctx context.Context, pcm []byte, apiKey, lang stri
 	}
 
 	var res struct{ Text string }
-	json.Unmarshal(rb, &res)
+	if err := json.Unmarshal(rb, &res); err != nil {
+		log.Error("[EL-REST] unmarshal failed", "err", err, "body", fmt.Sprintf("%.200q", string(rb)))
+		return "", fmt.Errorf("unmarshal response: %w", err)
+	}
 	text := strings.TrimSpace(res.Text)
 	log.Info("[EL] ElevenLabs REST API", "elapsed", time.Since(t0).Round(time.Millisecond), "text", text)
 	return text, nil
