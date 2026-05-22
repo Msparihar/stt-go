@@ -6,19 +6,26 @@ Windows desktop speech-to-text app. Hold Right Alt → record → release → tr
 
 ## Architecture
 
-Single Go binary, 8 source files, no CGo. Uses Win32 APIs directly (waveIn, SendInput, Direct2D).
+Single Go binary, 13 source files, no CGo. Uses Win32 APIs directly (waveIn, SendInput, Direct2D).
 
 | File | Purpose |
 |------|---------|
 | `main.go` | Entry point, flags, config loading, `readEnvKey`, `initVocabulary` |
 | `config.go` | `Config` struct, `loadConfig`, `saveConfig`, `defaultConfig`, `runSetup` (interactive CLI wizard) |
-| `service.go` | `sttService` — hotkey loop (Right Alt polling), `onPress`/`onRelease`, fallback orchestration, post-processing, `compareWithWhisper`, tray setup, debug audio save |
+| `service.go` | `sttService` struct, lifecycle (`newSTTService`, `switchBackend`, `run`), `postProcess` |
+| `hotkey.go` | `onPress` / `onRelease` — Right Alt poll loop, debounce, start/stop recording |
+| `race.go` | `raceTranscribe` — 2s streaming head-start then parallel REST fallback; `compareWithWhisper` background mismatch logging |
+| `tray.go` | System tray icon, `makeICO`, `setupTray` menu (backend switch + mic selection) |
+| `audio_files.go` | `saveAudioToDisk`, `saveDebugAudio`, `cleanupOldFiles` |
+| `retry.go` | retry wrapper with transient/permanent error classification and budget |
+| `httpclient.go` | per-backend isolated HTTP clients (separate connection pools) |
 | `deepgram.go` | `dgConn` — Deepgram Nova-3 WebSocket streaming, buffering, `CloseStream` finalize, `wasDropped` flag |
 | `elevenlabs.go` | `elConn` — ElevenLabs Scribe v2 realtime WebSocket streaming, same pattern as Deepgram |
-| `whisper.go` | `transcribeWhisper` (OpenAI REST), `transcribeElevenLabsREST` (Scribe v2 batch), `transcribeParallelFallback`, `typeText` (SendInput), `pcmToWAV` |
+| `whisper_stream.go` | OpenAI gpt-4o-mini-transcribe SSE streaming |
+| `whisper_realtime.go` / `whisper_realtime_pool.go` | Whisper realtime WebSocket + worker pool |
 | `recorder.go` | `recorder` — Windows waveIn audio capture, 16kHz/16-bit/mono, device enumeration |
 | `overlay.go` | `waveOverlay` — Direct2D animated waveform, topmost transparent window |
-| `clipboard.go` | Ctrl+Shift+B paste-path hotkey |
+| `clipboard.go` | Ctrl+Shift+V paste-path hotkey |
 
 ## Key Patterns
 
