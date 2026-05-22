@@ -753,7 +753,9 @@ func cleanupOldFiles(log *slog.Logger) {
 				continue
 			}
 			if info.ModTime().Before(cutoff) {
-				os.Remove(filepath.Join(debugDir, e.Name()))
+				if err := os.Remove(filepath.Join(debugDir, e.Name())); err != nil {
+					log.Error("[CLEANUP] failed to remove file", "path", filepath.Join(debugDir, e.Name()), "err", err)
+				}
 				removed++
 			}
 		}
@@ -773,7 +775,9 @@ func cleanupOldFiles(log *slog.Logger) {
 				continue
 			}
 			if info.ModTime().Before(cutoff) {
-				os.Remove(filepath.Join(failedDir, e.Name()))
+				if err := os.Remove(filepath.Join(failedDir, e.Name())); err != nil {
+					log.Error("[CLEANUP] failed to remove file", "path", filepath.Join(failedDir, e.Name()), "err", err)
+				}
 				removed++
 			}
 		}
