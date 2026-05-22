@@ -131,25 +131,43 @@ func newSTTService(backend, lang string, log *slog.Logger) *sttService {
 	case "api":
 		s.apiKey = readEnvKey("OPENAI_API_KEY")
 		if s.apiKey == "" {
-			log.Error("OPENAI_API_KEY not found")
+			log.Error("[SVC] OPENAI_API_KEY not found")
 		}
-		log.Info("OpenAI client ready")
+		log.Info("[SVC] OpenAI client ready")
+	case "whisper_stream":
+		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		if s.apiKey == "" {
+			log.Error("[SVC] OPENAI_API_KEY not found")
+		}
+		log.Info("[SVC] Whisper streaming client ready")
+	case "whisper_realtime":
+		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		if s.apiKey == "" {
+			log.Error("[SVC] OPENAI_API_KEY not found")
+		}
+		log.Info("[SVC] Whisper Realtime client ready")
 	case "deepgram":
 		s.apiKey = readEnvKey("DEEPGRAM_API_KEY")
 		if s.apiKey == "" {
-			log.Error("DEEPGRAM_API_KEY not found")
+			log.Error("[SVC] DEEPGRAM_API_KEY not found")
 		}
 		s.dgc = newDGConn(s.apiKey, lang, log)
-		log.Info("Deepgram client ready (on-demand connection)")
+		log.Info("[SVC] Deepgram client ready (on-demand connection)")
 	case "elevenlabs":
 		s.apiKey = readEnvKey("ELEVENLABS_API_KEY")
 		if s.apiKey == "" {
-			log.Error("ELEVENLABS_API_KEY not found")
+			log.Error("[SVC] ELEVENLABS_API_KEY not found")
 		}
 		s.elc = newELConn(s.apiKey, lang, log)
-		log.Info("ElevenLabs client ready (on-demand connection)")
+		log.Info("[SVC] ElevenLabs client ready (on-demand connection)")
+	case "elevenlabs_batch":
+		s.apiKey = readEnvKey("ELEVENLABS_API_KEY")
+		if s.apiKey == "" {
+			log.Error("[SVC] ELEVENLABS_API_KEY not found")
+		}
+		log.Info("[SVC] ElevenLabs batch client ready (REST upload with keyterms)")
 	}
-	log.Info("STT Service initialized", "backend", backend, "language", lang)
+	log.Info("[SVC] STT Service initialized", "backend", backend, "language", lang)
 	return s
 }
 
@@ -157,7 +175,7 @@ func (s *sttService) switchBackend(backend string) {
 	if backend == s.backend {
 		return
 	}
-	s.log.Info("Switching backend", "from", s.backend, "to", backend)
+	s.log.Info("[SVC] Switching backend", "from", s.backend, "to", backend)
 
 	// Close existing connections if switching away
 	if s.backend == "deepgram" && s.dgc != nil {
@@ -174,23 +192,41 @@ func (s *sttService) switchBackend(backend string) {
 	case "api":
 		s.apiKey = readEnvKey("OPENAI_API_KEY")
 		if s.apiKey == "" {
-			s.log.Error("OPENAI_API_KEY not found")
+			s.log.Error("[SVC] OPENAI_API_KEY not found")
 		}
-		s.log.Info("Switched to Whisper")
+		s.log.Info("[SVC] Switched to Whisper")
+	case "whisper_stream":
+		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		if s.apiKey == "" {
+			s.log.Error("[SVC] OPENAI_API_KEY not found")
+		}
+		s.log.Info("[SVC] Switched to Whisper Streaming")
+	case "whisper_realtime":
+		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		if s.apiKey == "" {
+			s.log.Error("[SVC] OPENAI_API_KEY not found")
+		}
+		s.log.Info("[SVC] Switched to Whisper Realtime")
 	case "deepgram":
 		s.apiKey = readEnvKey("DEEPGRAM_API_KEY")
 		if s.apiKey == "" {
-			s.log.Error("DEEPGRAM_API_KEY not found")
+			s.log.Error("[SVC] DEEPGRAM_API_KEY not found")
 		}
 		s.dgc = newDGConn(s.apiKey, s.lang, s.log)
-		s.log.Info("Switched to Deepgram (on-demand connection)")
+		s.log.Info("[SVC] Switched to Deepgram (on-demand connection)")
 	case "elevenlabs":
 		s.apiKey = readEnvKey("ELEVENLABS_API_KEY")
 		if s.apiKey == "" {
-			s.log.Error("ELEVENLABS_API_KEY not found")
+			s.log.Error("[SVC] ELEVENLABS_API_KEY not found")
 		}
 		s.elc = newELConn(s.apiKey, s.lang, s.log)
-		s.log.Info("Switched to ElevenLabs (on-demand connection)")
+		s.log.Info("[SVC] Switched to ElevenLabs (on-demand connection)")
+	case "elevenlabs_batch":
+		s.apiKey = readEnvKey("ELEVENLABS_API_KEY")
+		if s.apiKey == "" {
+			s.log.Error("[SVC] ELEVENLABS_API_KEY not found")
+		}
+		s.log.Info("[SVC] Switched to ElevenLabs Batch (REST upload with keyterms)")
 	}
 }
 
@@ -199,7 +235,7 @@ func (s *sttService) onPress() {
 	// restore it before typing (overlay or other windows may steal focus)
 	hwnd, _, _ := pGetForegroundWindow.Call()
 	s.targetHwnd = hwnd
-	s.log.Info("onPress: captured foreground window", "hwnd", fmt.Sprintf("0x%X", hwnd))
+	s.log.Info("[KEY] onPress: captured foreground window", "hwnd", fmt.Sprintf("0x%X", hwnd))
 
 	if s.onState != nil {
 		s.onState(stateListening)
@@ -229,7 +265,7 @@ func (s *sttService) onPress() {
 			}
 			s.elc.send(data)
 		}
-	default: // "api" (Whisper)
+	default: // "api", "whisper_stream", "whisper_realtime" — buffer full audio then POST/connect
 		s.rec.onChunk = func(data []byte) {
 			s.rec.allData = append(s.rec.allData, data...)
 			if s.overlay != nil {
@@ -239,12 +275,14 @@ func (s *sttService) onPress() {
 	}
 
 	if err := s.rec.start(); err != nil {
-		s.log.Error("Recording failed", "err", err)
+		s.log.Error("[KEY] Recording failed to start", "err", err)
 		return
 	}
 }
 
 func (s *sttService) onRelease() {
+	holdDuration := time.Since(s.recT0)
+	s.log.Info("[KEY] onRelease: key released", "hold_duration", holdDuration.Round(time.Millisecond))
 	if s.overlay != nil {
 		s.overlay.showTranscribing()
 	}
@@ -252,7 +290,7 @@ func (s *sttService) onRelease() {
 	go func() {
 		defer func() {
 			if p := recover(); p != nil {
-				s.log.Error("onRelease: panic recovered", "panic", fmt.Sprintf("%v", p))
+				s.log.Error("[KEY] onRelease: panic recovered", "panic", fmt.Sprintf("%v", p))
 			}
 			if s.overlay != nil {
 				s.overlay.hide()
@@ -266,84 +304,65 @@ func (s *sttService) onRelease() {
 		duration := float64(totalBytes) / float64(avgBytesPerSec)
 
 		if duration < 0.3 {
-			s.log.Info("Too short, ignoring", "backend", s.backend, "duration", fmt.Sprintf("%.2fs", duration))
+			s.log.Info("[KEY] Too short, ignoring", "backend", s.backend, "duration", fmt.Sprintf("%.2fs", duration))
 			return
 		}
 
 		// Save every recording to debug-audio/ for diagnosis
 		debugFile := saveDebugAudio(s.rec.allData, s.log)
+		pcm := s.rec.allData
 
 		transcribeStart := time.Now()
 		usedBackend := s.backend
 		var text string
 		var transcribeErr error
+
 		switch s.backend {
 		case "api":
-			text, transcribeErr = transcribeWhisper(s.rec.allData, s.apiKey, s.lang, s.log)
-		case "deepgram":
-			text = s.dgc.finalize(s.recT0)
-		case "elevenlabs":
-			text = s.elc.finalize(s.recT0)
+			// Whisper REST — no racing, retry transient failures
+			cfg := defaultRetryConfig()
+			cfg.onRetry = func() { closeIdleConns(whisperHTTPClient) }
+			res := withRetry(context.Background(), cfg, "whisper", s.log,
+				func(ctx context.Context) (string, error) {
+					return transcribeWhisper(ctx, pcm, s.apiKey, s.lang, s.log)
+				})
+			text, transcribeErr = res.text, res.err
+		case "whisper_stream":
+			// Whisper SSE streaming — no racing, retry transient failures
+			cfg := defaultRetryConfig()
+			cfg.onRetry = func() { closeIdleConns(whisperStreamHTTPClient) }
+			res := withRetry(context.Background(), cfg, "whisper_stream", s.log,
+				func(ctx context.Context) (string, error) {
+					return transcribeWhisperStream(ctx, pcm, s.apiKey, s.lang, s.log)
+				})
+			text, transcribeErr = res.text, res.err
+		case "whisper_realtime":
+			// Whisper Realtime WebSocket — no racing, retry transient failures
+			cfg := defaultRetryConfig()
+			res := withRetry(context.Background(), cfg, "whisper_realtime", s.log,
+				func(ctx context.Context) (string, error) {
+					return transcribeWhisperRealtime(ctx, pcm, s.apiKey, s.lang, s.log)
+				})
+			text, transcribeErr = res.text, res.err
+		case "elevenlabs_batch":
+			// ElevenLabs REST upload — full keyterms biasing, no racing
+			cfg := defaultRetryConfig()
+			cfg.onRetry = func() { closeIdleConns(elevenLabsRESTHTTPClient) }
+			res := withRetry(context.Background(), cfg, "elevenlabs_batch", s.log,
+				func(ctx context.Context) (string, error) {
+					return transcribeElevenLabsREST(ctx, pcm, s.apiKey, s.lang, s.log)
+				})
+			text, transcribeErr = res.text, res.err
+		case "deepgram", "elevenlabs":
+			// Race: streaming backend vs REST fallbacks, each with its own retry loop
+			text, usedBackend, transcribeErr = s.raceTranscribe(pcm, duration)
 		}
+
 		transcribeElapsed := time.Since(transcribeStart)
 		sessionElapsed := time.Since(s.recT0)
 
-		// Detect if streaming backend connection dropped (partial/no transcript)
-		streamingDropped := false
-		if s.backend == "deepgram" && s.dgc != nil {
-			streamingDropped = s.dgc.wasDropped()
-		}
-		// For elevenlabs streaming, check if text is suspiciously short vs recording duration
-		// (ElevenLabs doesn't have a dropped flag, but same pattern applies)
-		if s.backend == "elevenlabs" && text == "" {
-			streamingDropped = true
-		}
-
-		// Fallback: streaming returned empty OR connection dropped mid-recording
-		needsFallback := (text == "" || streamingDropped) && s.backend != "api" && len(s.rec.allData) > 0 && duration >= 0.5
-		if needsFallback {
-			if text != "" {
-				s.log.Warn("Streaming backend returned partial transcript (connection dropped), falling back",
-					"backend", s.backend,
-					"partial_text", text,
-					"duration", fmt.Sprintf("%.1fs", duration),
-				)
-			} else {
-				s.log.Warn("Streaming backend returned empty, falling back",
-					"backend", s.backend,
-					"duration", fmt.Sprintf("%.1fs", duration),
-				)
-			}
-
-			whisperKey := readEnvKey("OPENAI_API_KEY")
-			elevenLabsKey := readEnvKey("ELEVENLABS_API_KEY")
-
-			fallbackStart := time.Now()
-			fallbackText, fallbackBackend, fallbackErr := transcribeParallelFallback(
-				s.rec.allData, whisperKey, elevenLabsKey, s.lang, s.log,
-			)
-			transcribeElapsed += time.Since(fallbackStart)
-			sessionElapsed = time.Since(s.recT0)
-
-			if fallbackErr == nil && fallbackText != "" {
-				text = fallbackText
-				usedBackend = s.backend + "+" + fallbackBackend
-				transcribeErr = nil
-			} else {
-				// ALL backends failed — save audio to disk so voice is never lost
-				transcribeErr = fallbackErr
-				savedPath := saveAudioToDisk(s.rec.allData, s.log)
-				if savedPath != "" {
-					s.log.Error("All transcription backends failed — audio saved to disk",
-						"path", savedPath,
-						"duration", fmt.Sprintf("%.1fs", duration),
-					)
-				}
-			}
-		}
-
 		if transcribeErr != nil {
-			s.log.Error("STT result",
+			s.log.Error("[STT] result",
 				"backend", usedBackend,
 				"language", s.lang,
 				"duration", fmt.Sprintf("%.1fs", duration),
@@ -354,8 +373,8 @@ func (s *sttService) onRelease() {
 			return
 		}
 
-		// Unified log line for every transcription — grep "STT result" to analyze
-		s.log.Info("STT result",
+		// Unified log line for every transcription — grep "[STT] result" to analyze
+		s.log.Info("[STT] result",
 			"backend", usedBackend,
 			"language", s.lang,
 			"duration", fmt.Sprintf("%.1fs", duration),
@@ -372,9 +391,9 @@ func (s *sttService) onRelease() {
 
 		// Background Whisper comparison — always run regardless of primary backend
 		// to detect transcription differences and build keyword correction data
-		if text != "" && usedBackend != "api" && len(s.rec.allData) > 0 {
-			pcmCopy := make([]byte, len(s.rec.allData))
-			copy(pcmCopy, s.rec.allData)
+		if text != "" && usedBackend != "api" && !strings.Contains(usedBackend, "whisper") && len(pcm) > 0 {
+			pcmCopy := make([]byte, len(pcm))
+			copy(pcmCopy, pcm)
 			primaryText := text
 			primaryBackend := usedBackend
 			audioFile := debugFile
@@ -383,8 +402,231 @@ func (s *sttService) onRelease() {
 	}()
 }
 
+// raceStreamingDeadline is how long we wait for a clean streaming result
+// before firing REST fallbacks. If streaming delivers a non-dropped transcript
+// within this window, we skip the REST calls entirely.
+const raceStreamingDeadline = 2 * time.Second
+
+// raceHardTimeout is the absolute cap on the entire race. If all backends are
+// still retrying after this, we give up and save audio to disk.
+const raceHardTimeout = 25 * time.Second
+
+// raceTranscribe races the streaming backend (Deepgram/ElevenLabs WS) against
+// two REST backends (Whisper, ElevenLabs Scribe REST), each with its own retry
+// loop. Design:
+//
+//  1. All three backends start immediately.
+//  2. If the STREAMING backend finishes cleanly within raceStreamingDeadline
+//     (no connection drop), it wins — REST calls are cancelled and we return.
+//  3. Otherwise, first REST backend to produce a non-empty transcript wins —
+//     the other REST and the streaming finalize are cancelled.
+//  4. If all three exhaust their retries with no usable transcript, the audio
+//     is saved to failed-audio/ for later recovery.
+//
+// Each REST backend runs withRetry independently. A single backend failing
+// does not affect the others. Cancellation propagates via context — losing
+// backends abort in-flight HTTP calls promptly, no wasted bandwidth.
+func (s *sttService) raceTranscribe(pcm []byte, duration float64) (text, usedBackend string, err error) {
+	// Parent context bounds the whole race. cancel() is called on first win
+	// OR on timeout to abort all remaining goroutines. Every backend must
+	// honor this context for the cancellation to work.
+	ctx, cancel := context.WithTimeout(context.Background(), raceHardTimeout)
+	defer cancel()
+
+	type result struct {
+		text    string
+		backend string
+		err     error
+		dropped bool // streaming-only: true if WS connection dropped mid-recording
+	}
+
+	// Buffered so late senders never block after a winner is chosen.
+	// 3 slots = streaming + whisper + elevenlabs, at most one send per backend.
+	ch := make(chan result, 3)
+
+	// ── Backend 1: streaming (Deepgram or ElevenLabs WS) ────────────────
+	go func() {
+		var t string
+		var dropped bool
+		switch s.backend {
+		case "deepgram":
+			t = s.dgc.finalize(ctx, s.recT0)
+			dropped = s.dgc.wasDropped()
+		case "elevenlabs":
+			t = s.elc.finalize(ctx, s.recT0)
+			dropped = s.elc.wasDropped()
+		}
+		if dropped && t == "" {
+			ch <- result{"", s.backend, fmt.Errorf("connection dropped"), true}
+		} else {
+			ch <- result{t, s.backend, nil, dropped}
+		}
+	}()
+
+	// ── Backend 2: Whisper REST (retry loop) ────────────────────────────
+	whisperKey := readEnvKey("OPENAI_API_KEY")
+	if whisperKey != "" {
+		whisperCfg := defaultRetryConfig()
+		whisperCfg.onRetry = func() { closeIdleConns(whisperHTTPClient) }
+		go func() {
+			res := withRetry(ctx, whisperCfg, "whisper_rest", s.log,
+				func(attemptCtx context.Context) (string, error) {
+					return transcribeWhisper(attemptCtx, pcm, whisperKey, s.lang, s.log)
+				})
+			ch <- result{res.text, "whisper_rest", res.err, false}
+		}()
+	}
+
+	// ── Backend 3: ElevenLabs REST (retry loop) ─────────────────────────
+	elevenLabsKey := readEnvKey("ELEVENLABS_API_KEY")
+	if elevenLabsKey != "" {
+		elCfg := defaultRetryConfig()
+		elCfg.onRetry = func() { closeIdleConns(elevenLabsRESTHTTPClient) }
+		go func() {
+			res := withRetry(ctx, elCfg, "elevenlabs_rest", s.log,
+				func(attemptCtx context.Context) (string, error) {
+					return transcribeElevenLabsREST(attemptCtx, pcm, elevenLabsKey, s.lang, s.log)
+				})
+			ch <- result{res.text, "elevenlabs_rest", res.err, false}
+		}()
+	}
+
+	expected := 1 // streaming always runs
+	if whisperKey != "" {
+		expected++
+	}
+	if elevenLabsKey != "" {
+		expected++
+	}
+
+	// ── Phase 1: give streaming raceStreamingDeadline for a CLEAN win ───
+	var streamingResult *result
+	deadline := time.NewTimer(raceStreamingDeadline)
+	defer deadline.Stop()
+
+	phase1Loop:
+	for {
+		select {
+		case r := <-ch:
+			if r.backend == s.backend {
+				// Streaming finished
+				if r.err == nil && r.text != "" && !r.dropped {
+					// Clean streaming win — cancel REST backends
+					s.log.Info("[RACE] streaming won race (clean)", "backend", r.backend, "text_len", len(r.text))
+					cancel()
+					return r.text, r.backend, nil
+				}
+				// Streaming either failed, dropped, or returned empty — keep its
+				// partial result as a fallback but continue to phase 2.
+				streamingResult = &r
+				if r.dropped {
+					s.log.Warn("[RACE] streaming dropped — waiting on REST for full audio",
+						"backend", r.backend, "partial_text", r.text)
+				} else if r.err != nil {
+					s.log.Warn("[RACE] streaming failed — waiting on REST",
+						"backend", r.backend, "err", r.err)
+				} else {
+					s.log.Warn("[RACE] streaming empty — waiting on REST",
+						"backend", r.backend)
+				}
+				break phase1Loop
+			}
+			// A REST backend finished first (streaming still in flight).
+			// If it succeeded, that's our winner — cancel the rest.
+			if r.err == nil && r.text != "" {
+				s.log.Info("[RACE] REST won race (first)", "backend", r.backend, "text_len", len(r.text))
+				cancel()
+				return r.text, r.backend, nil
+			}
+			// REST failed — note it and keep waiting. We'll collect it in phase 2.
+			s.log.Warn("[RACE] REST finished with no result before streaming",
+				"backend", r.backend, "err", r.err)
+			// Push it back into the channel so phase 2 can pick it up? No —
+			// simpler: record and continue.
+			_ = r
+		case <-deadline.C:
+			s.log.Warn("[RACE] streaming deadline exceeded, proceeding with REST",
+				"deadline", raceStreamingDeadline)
+			break phase1Loop
+		case <-ctx.Done():
+			return "", s.backend, ctx.Err()
+		}
+	}
+
+	// ── Phase 2: first successful REST wins, streaming is safety net ────
+	// We've consumed at most one result from ch (the streaming one).
+	// Wait for the remaining backends. First REST success → cancel + return.
+	var lastErr error
+	type candidate struct {
+		text    string
+		backend string
+	}
+	var candidates []candidate
+	if streamingResult != nil && streamingResult.text != "" {
+		// Include the (possibly partial/dropped) streaming result as a safety
+		// net. Only used if all REST backends also fail.
+		candidates = append(candidates, candidate{streamingResult.text, streamingResult.backend})
+	}
+
+	// How many more results to collect?
+	remaining := expected
+	if streamingResult != nil {
+		remaining-- // streaming already consumed
+	}
+
+	for remaining > 0 {
+		select {
+		case r := <-ch:
+			remaining--
+			if r.err != nil {
+				s.log.Warn("[RACE] backend failed", "backend", r.backend, "err", r.err)
+				lastErr = r.err
+				continue
+			}
+			if r.text == "" {
+				s.log.Warn("[RACE] backend returned empty transcript", "backend", r.backend)
+				continue
+			}
+			// REST success — first-REST-wins. Cancel everything else and return.
+			if r.backend != s.backend {
+				s.log.Info("[RACE] REST won race", "backend", r.backend, "text_len", len(r.text))
+				cancel()
+				return r.text, r.backend, nil
+			}
+			// Late streaming result — hold it as a candidate only
+			candidates = append(candidates, candidate{r.text, r.backend})
+			s.log.Info("[RACE] late streaming result collected", "backend", r.backend, "text_len", len(r.text))
+		case <-ctx.Done():
+			s.log.Error("[RACE] hard timeout exceeded", "timeout", raceHardTimeout)
+			goto pickBest
+		}
+	}
+
+pickBest:
+	if len(candidates) == 0 {
+		// Total failure — save audio for later recovery
+		savedPath := saveAudioToDisk(pcm, s.log)
+		if savedPath != "" {
+			s.log.Error("[RACE] all backends failed — audio saved to disk",
+				"path", savedPath, "duration", fmt.Sprintf("%.1fs", duration), "last_err", lastErr)
+		}
+		return "", s.backend, lastErr
+	}
+
+	// Only reached if ALL REST backends failed AND we have a streaming result.
+	// Pick the longest transcript as a last resort.
+	best := candidates[0]
+	for _, c := range candidates[1:] {
+		if len(c.text) > len(best.text) {
+			best = c
+		}
+	}
+	s.log.Info("[RACE] fell back to streaming/longest", "winner", best.backend, "winner_len", len(best.text))
+	return best.text, best.backend, nil
+}
+
 func (s *sttService) run(ctx context.Context) {
-	s.log.Info("STT Service running (Go) — hold Right Alt to record, release to transcribe")
+	s.log.Info("[SVC] STT Service running — hold Right Alt to record, release to transcribe")
 
 	pressed := false
 	tick := time.NewTicker(10 * time.Millisecond)
@@ -393,7 +635,7 @@ func (s *sttService) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.log.Info("STT Service stopped")
+			s.log.Info("[SVC] STT Service stopped")
 			return
 		case <-tick.C:
 			st, _, _ := pGetAsyncKey.Call(vkRMenu)
@@ -423,7 +665,7 @@ type mismatchEntry struct {
 func (s *sttService) compareWithWhisper(pcm []byte, primaryText, primaryBackend, audioFile string, duration float64) {
 	defer func() {
 		if p := recover(); p != nil {
-			s.log.Error("compareWithWhisper: panic", "panic", fmt.Sprintf("%v", p))
+			s.log.Error("[WH] compareWithWhisper: panic", "panic", fmt.Sprintf("%v", p))
 		}
 	}()
 
@@ -432,9 +674,13 @@ func (s *sttService) compareWithWhisper(pcm []byte, primaryText, primaryBackend,
 		return
 	}
 
-	whisperText, err := transcribeWhisper(pcm, whisperKey, s.lang, s.log)
+	// Background comparison runs on a generous timeout; no retry needed —
+	// if it fails, we just skip the mismatch log for this utterance.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	whisperText, err := transcribeWhisper(ctx, pcm, whisperKey, s.lang, s.log)
 	if err != nil {
-		s.log.Warn("Background Whisper comparison failed", "err", err)
+		s.log.Warn("[WH] Background comparison failed", "err", err)
 		return
 	}
 
@@ -447,11 +693,11 @@ func (s *sttService) compareWithWhisper(pcm []byte, primaryText, primaryBackend,
 	normWhisper = strings.TrimRight(normWhisper, ".!?,;:")
 
 	if normPrimary == normWhisper {
-		s.log.Info("Background Whisper match", "audio_file", audioFile)
+		s.log.Info("[WH] Background match", "audio_file", audioFile)
 		return
 	}
 
-	s.log.Warn("Transcription mismatch detected",
+	s.log.Warn("[WH] Transcription mismatch detected",
 		"primary_backend", primaryBackend,
 		"primary_text", primaryText,
 		"whisper_text", whisperText,
@@ -476,13 +722,13 @@ func appendMismatch(entry mismatchEntry, log *slog.Logger) {
 
 	data, err := json.Marshal(entry)
 	if err != nil {
-		log.Error("Failed to marshal mismatch", "err", err)
+		log.Error("[SVC] Failed to marshal mismatch", "err", err)
 		return
 	}
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Error("Failed to open mismatches.jsonl", "err", err)
+		log.Error("[SVC] Failed to open mismatches.jsonl", "err", err)
 		return
 	}
 	defer f.Close()
@@ -512,7 +758,7 @@ func cleanupOldFiles(log *slog.Logger) {
 			}
 		}
 		if removed > 0 {
-			log.Info("Cleaned up old debug audio files", "removed", removed)
+			log.Info("[SVC] Cleaned up old debug audio files", "removed", removed)
 		}
 	}
 
@@ -532,7 +778,7 @@ func cleanupOldFiles(log *slog.Logger) {
 			}
 		}
 		if removed > 0 {
-			log.Info("Cleaned up old failed audio files", "removed", removed)
+			log.Info("[SVC] Cleaned up old failed audio files", "removed", removed)
 		}
 	}
 
@@ -562,7 +808,7 @@ func cleanupOldFiles(log *slog.Logger) {
 	if len(kept) < len(lines) {
 		removed := len(lines) - len(kept)
 		os.WriteFile(mismatchPath, []byte(strings.Join(kept, "\n")+"\n"), 0644)
-		log.Info("Cleaned up old mismatch entries", "removed", removed, "kept", len(kept))
+		log.Info("[SVC] Cleaned up old mismatch entries", "removed", removed, "kept", len(kept))
 	}
 }
 
@@ -578,10 +824,10 @@ func saveAudioToDisk(pcm []byte, log *slog.Logger) string {
 
 	wav := pcmToWAV(pcm)
 	if err := os.WriteFile(path, wav, 0644); err != nil {
-		log.Error("Failed to save audio to disk", "err", err)
+		log.Error("[SVC] Failed to save audio to disk", "err", err)
 		return ""
 	}
-	log.Info("Audio saved to disk for later retry", "path", path, "size", len(wav))
+	log.Info("[SVC] Audio saved to disk for later retry", "path", path, "size", len(wav))
 	return path
 }
 
@@ -597,7 +843,7 @@ func saveDebugAudio(pcm []byte, log *slog.Logger) string {
 
 	wav := pcmToWAV(pcm)
 	if err := os.WriteFile(path, wav, 0644); err != nil {
-		log.Error("Failed to save debug audio", "err", err)
+		log.Error("[SVC] Failed to save debug audio", "err", err)
 		return ""
 	}
 	return filename
@@ -611,7 +857,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 	iconPath := filepath.Join(filepath.Dir(exe), "icon.ico")
 	iconIdle, err := os.ReadFile(iconPath)
 	if err != nil {
-		log.Warn("Could not load icon.ico, using fallback", "err", err)
+		log.Warn("[SVC] Could not load icon.ico, using fallback", "err", err)
 		iconIdle = makeICO(128, 128, 128, 255)
 	}
 	iconListen := makeICO(76, 175, 80, 255)
@@ -627,9 +873,11 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		systray.SetTooltip("STT-Go: Idle")
 
 		backendLabel := map[string]string{
-			"deepgram":   "Deepgram Nova-3",
-			"api":        "Whisper",
-			"elevenlabs": "ElevenLabs Scribe",
+			"deepgram":         "Deepgram Nova-3",
+			"api":              "Whisper",
+			"elevenlabs":       "ElevenLabs Scribe",
+			"whisper_stream":   "Whisper (streaming)",
+			"whisper_realtime": "Whisper (realtime)",
 		}[backend]
 		if backendLabel == "" {
 			backendLabel = backend
@@ -649,6 +897,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 				item.Check()
 			}
 			micID := mic.ID
+			micName := mic.Name
 			item.Click(func() {
 				// Uncheck all, check selected
 				for _, mi := range micItems {
@@ -656,7 +905,12 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 				}
 				item.Check()
 				svc.rec.setDeviceID(micID)
-				log.Info("Switched microphone", "device", micID, "name", mic.Name)
+				log.Info("[CFG] Switched microphone", "device", micID, "name", micName)
+				// Persist selection to config
+				appConfig.MicDevice = micName
+				if err := saveConfig(appConfig); err != nil {
+					log.Error("[CFG] Failed to save mic preference", "err", err)
+				}
 			})
 			micItems = append(micItems, item)
 		}
@@ -668,20 +922,32 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		// Backend submenu
 		mBackendMenu := systray.AddMenuItem("Backend", "Select transcription backend")
 		mDeepgram := mBackendMenu.AddSubMenuItem("Deepgram Nova-3", "")
-		mElevenLabs := mBackendMenu.AddSubMenuItem("ElevenLabs Scribe", "")
+		mElevenLabs := mBackendMenu.AddSubMenuItem("ElevenLabs Scribe (streaming)", "")
+		mElevenLabsBatch := mBackendMenu.AddSubMenuItem("ElevenLabs Scribe (batch + keyterms)", "")
 		mWhisper := mBackendMenu.AddSubMenuItem("Whisper (OpenAI)", "")
+		mWhisperStream := mBackendMenu.AddSubMenuItem("Whisper (streaming)", "")
+		mWhisperRealtime := mBackendMenu.AddSubMenuItem("Whisper (realtime)", "")
 		switch backend {
 		case "deepgram":
 			mDeepgram.Check()
 		case "elevenlabs":
 			mElevenLabs.Check()
+		case "elevenlabs_batch":
+			mElevenLabsBatch.Check()
+		case "whisper_stream":
+			mWhisperStream.Check()
+		case "whisper_realtime":
+			mWhisperRealtime.Check()
 		default:
 			mWhisper.Check()
 		}
 		uncheckAllBackends := func() {
 			mDeepgram.Uncheck()
 			mElevenLabs.Uncheck()
+			mElevenLabsBatch.Uncheck()
 			mWhisper.Uncheck()
+			mWhisperStream.Uncheck()
+			mWhisperRealtime.Uncheck()
 		}
 		mDeepgram.Click(func() {
 			uncheckAllBackends()
@@ -695,17 +961,56 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			svc.switchBackend("elevenlabs")
 			mInfo.SetTitle("STT-Go (ElevenLabs Scribe)")
 		})
+		mElevenLabsBatch.Click(func() {
+			uncheckAllBackends()
+			mElevenLabsBatch.Check()
+			svc.switchBackend("elevenlabs_batch")
+			mInfo.SetTitle("STT-Go (ElevenLabs batch)")
+		})
 		mWhisper.Click(func() {
 			uncheckAllBackends()
 			mWhisper.Check()
 			svc.switchBackend("api")
 			mInfo.SetTitle("STT-Go (Whisper)")
 		})
+		mWhisperStream.Click(func() {
+			uncheckAllBackends()
+			mWhisperStream.Check()
+			svc.switchBackend("whisper_stream")
+			mInfo.SetTitle("STT-Go (Whisper streaming)")
+		})
+		mWhisperRealtime.Click(func() {
+			uncheckAllBackends()
+			mWhisperRealtime.Check()
+			svc.switchBackend("whisper_realtime")
+			mInfo.SetTitle("STT-Go (Whisper realtime)")
+		})
 
 		systray.AddSeparator()
+		mRestart := systray.AddMenuItem("Restart", "Restart STT-Go")
+		mRestart.Click(func() {
+			log.Info("[SVC] Restart requested from tray")
+			exe, _ := os.Executable()
+			cancel()
+			closeRealtimePool()
+			// Launch a new instance before quitting
+			args := []string{"-backend", svc.backend}
+			proc, err := os.StartProcess(exe, append([]string{exe}, args...), &os.ProcAttr{
+				Dir:   filepath.Dir(exe),
+				Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+			})
+			if err != nil {
+				log.Error("[SVC] Failed to restart", "err", err)
+			} else {
+				proc.Release()
+				log.Info("[SVC] New instance launched, exiting current")
+			}
+			systray.Quit()
+		})
 		mQuit := systray.AddMenuItem("Quit", "Exit STT-Go")
 		mQuit.Click(func() {
 			cancel()
+			closeRealtimePool()
 			systray.Quit()
 		})
 
@@ -726,6 +1031,6 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		svc.run(ctx)
 		systray.Quit()
 	}, func() {
-		log.Info("STT-Go exiting")
+		log.Info("[SVC] STT-Go exiting")
 	})
 }

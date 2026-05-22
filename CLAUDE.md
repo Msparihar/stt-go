@@ -22,10 +22,13 @@ Single Go binary, 8 source files, no CGo. Uses Win32 APIs directly (waveIn, Send
 
 ## Key Patterns
 
-### Fallback chain (in `service.go onRelease`)
-1. Primary streaming backend (Deepgram or ElevenLabs realtime)
-2. If empty/dropped → `transcribeParallelFallback`: Whisper + ElevenLabs REST in parallel, first wins
-3. If all fail → `saveAudioToDisk` to `failed-audio/`
+### Race transcription (`raceTranscribe` in service.go)
+1. Streaming backend (Deepgram/ElevenLabs) gets a **2-second head start**
+2. If streaming delivers a clean result within 2s → use it immediately (~300-700ms typical)
+3. If streaming is slow/dropped → fire **Whisper REST + ElevenLabs REST in parallel**
+4. Collect ALL results, pick the **longest** (most complete) transcript — prevents partial transcripts from dropped connections
+5. If all backends fail → `saveAudioToDisk` to `failed-audio/`
+6. Hard timeout: 15s — if nothing responds, audio is saved to disk
 
 ### On-demand connections
 Both `dgConn` and `elConn` connect fresh per recording (on hotkey press), buffer audio until WebSocket ready, flush buffered chunks, then stream. Connection closed after each transcription.
@@ -39,6 +42,9 @@ Case-insensitive find-replace from `config.json` `replacements` map. Applied aft
 ### Background comparison (`compareWithWhisper` in service.go)
 Every non-Whisper transcription is re-transcribed with Whisper in background. Mismatches logged to `mismatches.jsonl` for accuracy monitoring.
 
+### Mic persistence
+`mic_device` in `config.json` stores the selected mic name. On startup, matched against `listMics()` by name. Falls back to system default (`WAVE_MAPPER`) if not found. Saved automatically when user selects from tray menu.
+
 ## Config
 
 `config.json` next to exe. Created by `--setup` or auto-generated with defaults on first run.
@@ -47,6 +53,7 @@ Every non-Whisper transcription is re-transcribed with Whisper in background. Mi
 {
   "default_backend": "deepgram",
   "language": "en",
+  "mic_device": "Microphone (Brio 100)",
   "keyterms": ["..."],
   "replacements": {"from": "to"},
   "api_keys": {"deepgram": "", "openai": "", "elevenlabs": ""}
@@ -70,8 +77,42 @@ powershell.exe -Command "Get-Process stt-go -ErrorAction SilentlyContinue | Stop
 
 - **Log file:** `stt-go.log` (lumberjack, 5MB rotation, 3 backups)
 - **Debug audio:** Every recording saved to `debug-audio/` as WAV (auto-cleaned after 7 days)
+- **Failed audio:** `failed-audio/` — saved when ALL backends fail, can be manually transcribed later
 - **Mismatches:** `mismatches.jsonl` — compare primary backend vs Whisper
-- **Check logs from WSL:** `grep "STT result" /mnt/c/Users/manis/scripts/stt-go/stt-go.log | tail -20`
+
+### Log tags (filter with `grep "[TAG]"`)
+
+| Tag | Component |
+|-----|-----------|
+| `[KEY]` | Hotkey press/release, hold duration |
+| `[REC]` | Recorder: start, chunk progress (every 10 chunks), stop, cleanup, waveIn API results |
+| `[DG]` | Deepgram: connect, send, buffer, finalize, CloseStream |
+| `[EL]` | ElevenLabs: connect, stream, finalize |
+| `[WH]` | Whisper API, background comparison, mismatches |
+| `[RACE]` | Race logic: deadline, fallbacks fired, winner selection, longest-pick |
+| `[STT]` | Final transcription result (always logged) |
+| `[TYPE]` | Text typing: RightAlt wait, foreground restore, SendInput |
+| `[CFG]` | Config load/save, mic selection persistence |
+| `[SVC]` | Service lifecycle, backend switching, startup/shutdown |
+| `[CLIP]` | Clipboard paste-path hotkey |
+
+### Example log queries
+```bash
+# See all final transcription results
+grep "\[STT\]" stt-go.log | tail -20
+
+# Debug recording issues (was audio captured?)
+grep "\[REC\]" stt-go.log | tail -30
+
+# Debug Deepgram connection drops
+grep "\[DG\]" stt-go.log | tail -30
+
+# See race decisions (which backend won?)
+grep "\[RACE\]" stt-go.log | tail -20
+
+# Full pipeline for last recording (all tags)
+grep "\[KEY\]\|\[REC\]\|\[DG\]\|\[RACE\]\|\[STT\]" stt-go.log | tail -40
+```
 
 ## Common Issues
 

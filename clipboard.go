@@ -32,7 +32,7 @@ const (
 
 	modCtrl  = 0x0002
 	modShift = 0x0004
-	vkB      = 0x42
+	vkV      = 0x56
 
 	wmHotkey = 0x0312
 )
@@ -89,15 +89,15 @@ func clipboardSaveDir() string {
 	return dir
 }
 
-// registerClipboardHotkey registers Ctrl+Shift+B as a global hotkey.
+// registerClipboardHotkey registers Ctrl+Shift+V as a global hotkey.
 // Must be called from a thread with a message loop.
 func registerClipboardHotkey(hwnd uintptr, log *slog.Logger) bool {
-	ret, _, err := pRegisterHotKey.Call(hwnd, clipboardHotkeyID, modCtrl|modShift, vkB)
+	ret, _, err := pRegisterHotKey.Call(hwnd, clipboardHotkeyID, modCtrl|modShift, vkV)
 	if ret == 0 {
-		log.Error("Failed to register Ctrl+Shift+B hotkey", "err", err)
+		log.Error("[CLIP] Failed to register Ctrl+Shift+V hotkey", "err", err)
 		return false
 	}
-	log.Info("Clipboard paste-path hotkey registered (Ctrl+Shift+B)")
+	log.Info("[CLIP] hotkey registered (Ctrl+Shift+V)")
 	return true
 }
 
@@ -106,23 +106,42 @@ func unregisterClipboardHotkey(hwnd uintptr) {
 	pUnregisterHotKey.Call(hwnd, clipboardHotkeyID)
 }
 
-// handleClipboardHotkey is called when Ctrl+Shift+B is pressed.
+// pressShiftEnter sends a Shift+Enter virtual-key sequence via SendInput.
+// Used to wrap the typed file path with newlines: Shift+Enter is a line
+// break in chat apps (Claude Code, ChatGPT) and a regular newline in
+// most editors, so it's safe in both contexts.
+func pressShiftEnter() {
+	const vkShift = 0x10
+	const vkReturn = 0x0D
+	var inp [4]kbInput
+	inp[0] = kbInput{typ: inputKbd, vk: vkShift}
+	inp[1] = kbInput{typ: inputKbd, vk: vkReturn}
+	inp[2] = kbInput{typ: inputKbd, vk: vkReturn, flags: kfKeyup}
+	inp[3] = kbInput{typ: inputKbd, vk: vkShift, flags: kfKeyup}
+	pSendInput.Call(4, uintptr(unsafe.Pointer(&inp[0])), unsafe.Sizeof(inp[0]))
+	time.Sleep(20 * time.Millisecond)
+}
+
+// handleClipboardHotkey is called when Ctrl+Shift+V is pressed.
 // It reads the clipboard, extracts or saves the image, and types the file path
-// into the active window using simulated keystrokes (same as STT typeText).
+// into the active window using simulated keystrokes (same as STT typeText),
+// surrounded by Shift+Enter newlines.
 func handleClipboardHotkey(log *slog.Logger) {
 	path, err := getClipboardImagePath(log)
 	if err != nil {
-		log.Warn("Clipboard paste-path: no image", "err", err)
+		log.Warn("[CLIP] paste-path: no image", "err", err)
 		return
 	}
-	log.Info("Clipboard paste-path", "path", path)
+	log.Info("[CLIP] paste-path", "path", path)
 
 	// Wait for Ctrl and Shift to be released before typing,
 	// otherwise the typed characters combine with held modifiers
 	// and trigger app shortcuts (e.g. Ctrl+Shift+C opens new terminal tab).
 	waitForModifierRelease()
 	// Use 0 for targetHwnd — clipboard hotkey doesn't need window restore
+	pressShiftEnter()
 	typeText(path, 0, log)
+	pressShiftEnter()
 }
 
 // waitForModifierRelease polls until Ctrl and Shift are both released.
@@ -191,7 +210,7 @@ func getDropFilePath(log *slog.Logger) (string, error) {
 	pDragQueryFileW.Call(hDrop, 0, uintptr(unsafe.Pointer(&buf[0])), nameLen+1)
 	path := windows.UTF16ToString(buf)
 
-	log.Info("Clipboard file drop", "path", path)
+	log.Info("[CLIP] file drop", "path", path)
 	return path, nil
 }
 
@@ -289,7 +308,7 @@ func saveDIBtoPNG(format uintptr, log *slog.Logger) (string, error) {
 		return "", fmt.Errorf("PNG encode failed: %w", err)
 	}
 
-	log.Info("Saved clipboard image", "path", savePath, "size", fmt.Sprintf("%dx%d", width, height))
+	log.Info("[CLIP] saved image", "path", savePath, "size", fmt.Sprintf("%dx%d", width, height))
 	return savePath, nil
 }
 
@@ -328,7 +347,7 @@ func setClipboardText(text string, log *slog.Logger) error {
 		return fmt.Errorf("SetClipboardData failed")
 	}
 
-	log.Info("Set clipboard text", "text", truncate(text, 80))
+	log.Info("[CLIP] set text", "text", truncate(text, 80))
 	return nil
 }
 
@@ -363,7 +382,7 @@ type msgStruct struct {
 }
 
 // runClipboardHotkey runs in a dedicated goroutine with a locked OS thread.
-// It registers Ctrl+Shift+B and processes WM_HOTKEY messages.
+// It registers Ctrl+Shift+V and processes WM_HOTKEY messages.
 func runClipboardHotkey(ctx context.Context, log *slog.Logger) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()

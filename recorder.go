@@ -63,6 +63,7 @@ func listMics() []micDevice {
 			mics = append(mics, micDevice{ID: i, Name: name})
 		}
 	}
+	slog.Info("[REC] listMics: enumeration complete", "total", len(mics))
 	return mics
 }
 
@@ -91,19 +92,23 @@ type recorder struct {
 	done     chan struct{}
 	deviceID uintptr
 
-	allData   []byte
-	byteCount int
-	onChunk   func([]byte)
-	log       *slog.Logger
+	allData    []byte
+	byteCount  int
+	chunkCount int
+	onChunk    func([]byte)
+	log        *slog.Logger
 }
 
 func newRecorder(log *slog.Logger) *recorder {
-	return &recorder{log: log, deviceID: waveMapper}
+	r := &recorder{log: log, deviceID: waveMapper}
+	r.log.Info("[REC] newRecorder: created", "deviceID", waveMapper)
+	return r
 }
 
 func (r *recorder) setDeviceID(id uintptr) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.log.Info("[REC] Device ID changed", "old", r.deviceID, "new", id)
 	r.deviceID = id
 }
 
@@ -118,9 +123,11 @@ func (r *recorder) start() error {
 	if err != nil {
 		return fmt.Errorf("CreateEvent: %w", err)
 	}
+	r.log.Info("[REC] start: CreateEvent ok", "handle", fmt.Sprintf("0x%X", ev))
 	r.event = ev
 	r.allData = nil
 	r.byteCount = 0
+	r.chunkCount = 0
 
 	wfx := waveFormatEx{
 		FormatTag:      wavFmtPCM,
@@ -136,6 +143,7 @@ func (r *recorder) start() error {
 		r.deviceID, uintptr(unsafe.Pointer(&wfx)),
 		uintptr(ev), 0, cbEvent,
 	)
+	r.log.Info("[REC] start: waveInOpen", "mmresult", ret, "hwi", fmt.Sprintf("0x%X", r.hwi), "deviceID", r.deviceID)
 	if ret != 0 {
 		windows.CloseHandle(ev)
 		return fmt.Errorf("waveInOpen MMRESULT %d", ret)
@@ -150,8 +158,10 @@ func (r *recorder) start() error {
 		pWaveInPrepHdr.Call(r.hwi, uintptr(unsafe.Pointer(&r.hdrs[i])), unsafe.Sizeof(r.hdrs[i]))
 		pWaveInAddBuf.Call(r.hwi, uintptr(unsafe.Pointer(&r.hdrs[i])), unsafe.Sizeof(r.hdrs[i]))
 	}
+	r.log.Info("[REC] start: buffers prepared", "count", numBufs, "bufSize", bufSize)
 
 	ret, _, _ = pWaveInStart.Call(r.hwi)
+	r.log.Info("[REC] start: waveInStart", "mmresult", ret)
 	if ret != 0 {
 		r.cleanup()
 		return fmt.Errorf("waveInStart MMRESULT %d", ret)
@@ -159,7 +169,7 @@ func (r *recorder) start() error {
 	r.running = true
 	r.done = make(chan struct{})
 	go r.loop()
-	r.log.Info("Recording started")
+	r.log.Info("[REC] Recording started")
 	return nil
 }
 
@@ -167,9 +177,10 @@ func (r *recorder) loop() {
 	defer close(r.done)
 	defer func() {
 		if p := recover(); p != nil {
-			r.log.Error("recorder.loop: panic recovered", "panic", fmt.Sprintf("%v", p))
+			r.log.Error("[REC] recorder.loop: panic recovered", "panic", fmt.Sprintf("%v", p))
 		}
 	}()
+	r.log.Info("[REC] read loop started")
 	for {
 		r.mu.Lock()
 		running := r.running
@@ -193,6 +204,11 @@ func (r *recorder) processBufs() {
 			copy(data, unsafe.Slice((*byte)(unsafe.Pointer(r.hdrs[i].LpData)), n))
 
 			r.byteCount += len(data)
+			r.chunkCount++
+			if r.chunkCount%10 == 0 {
+				r.log.Info("[REC] processBufs: progress", "chunks", r.chunkCount, "totalBytes", r.byteCount)
+			}
+
 			if r.onChunk != nil {
 				r.onChunk(data)
 			} else {
@@ -213,6 +229,7 @@ func (r *recorder) processBufs() {
 func (r *recorder) stop() (pcm []byte, total int) {
 	// Drain: keep recording for a short window after key release
 	// to capture trailing speech that may still be in the mic buffer
+	r.log.Info("[REC] stop: drain started")
 	time.Sleep(200 * time.Millisecond)
 
 	r.mu.Lock()
@@ -220,36 +237,38 @@ func (r *recorder) stop() (pcm []byte, total int) {
 	r.mu.Unlock()
 
 	pWaveInStop.Call(r.hwi)
+	r.log.Info("[REC] stop: waveInStop called")
 	pWaveInReset.Call(r.hwi)
+	r.log.Info("[REC] stop: waveInReset called")
 	windows.SetEvent(r.event)
 
 	<-r.done
 	r.cleanup()
 
-	r.log.Info("Recording stopped", "bytes", r.byteCount,
+	r.log.Info("[REC] Recording stopped", "bytes", r.byteCount, "chunks", r.chunkCount,
 		"duration", fmt.Sprintf("%.1fs", float64(r.byteCount)/float64(avgBytesPerSec)))
 	return r.allData, r.byteCount
 }
 
 func (r *recorder) cleanup() {
-	r.log.Info("recorder.cleanup: starting", "hwi", fmt.Sprintf("0x%X", r.hwi))
+	r.log.Info("[REC] recorder.cleanup: starting", "hwi", fmt.Sprintf("0x%X", r.hwi))
 
 	if r.hwi == 0 {
-		r.log.Warn("recorder.cleanup: hwi is 0, skipping waveIn calls")
+		r.log.Warn("[REC] recorder.cleanup: hwi is 0, skipping waveIn calls")
 	} else {
 		for i := range numBufs {
 			if r.hdrs[i].LpData == 0 {
-				r.log.Warn("recorder.cleanup: skipping header with nil LpData", "buf", i)
+				r.log.Warn("[REC] recorder.cleanup: skipping header with nil LpData", "buf", i)
 				continue
 			}
 			ret, _, _ := pWaveInUnprepHdr.Call(r.hwi, uintptr(unsafe.Pointer(&r.hdrs[i])), unsafe.Sizeof(r.hdrs[i]))
 			if ret != 0 {
-				r.log.Error("recorder.cleanup: waveInUnprepareHeader failed", "buf", i, "mmresult", ret)
+				r.log.Error("[REC] recorder.cleanup: waveInUnprepareHeader failed", "buf", i, "mmresult", ret)
 			}
 		}
 		ret, _, _ := pWaveInClose.Call(r.hwi)
 		if ret != 0 {
-			r.log.Error("recorder.cleanup: waveInClose failed", "mmresult", ret)
+			r.log.Error("[REC] recorder.cleanup: waveInClose failed", "mmresult", ret)
 		}
 		r.hwi = 0
 	}
@@ -258,5 +277,5 @@ func (r *recorder) cleanup() {
 		windows.CloseHandle(r.event)
 		r.event = 0
 	}
-	r.log.Info("recorder.cleanup: done")
+	r.log.Info("[REC] recorder.cleanup: done")
 }

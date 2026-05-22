@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -48,26 +49,31 @@ func waitForRightAltRelease() {
 // for modifier keys to be released, and checks SendInput return values.
 func typeText(text string, targetHwnd uintptr, log *slog.Logger) {
 	if len(text) > 80 {
-		log.Info("typeText: will type", "chars", len(text), "text", text[:80]+"...")
+		log.Info("[TYPE] typeText: will type", "chars", len(text), "text", text[:80]+"...")
 	} else {
-		log.Info("typeText: will type", "chars", len(text), "text", text)
+		log.Info("[TYPE] typeText: will type", "chars", len(text), "text", text)
 	}
 
 	// Wait for Right Alt to be released so SendInput isn't swallowed
+	log.Info("[TYPE] typeText: waiting for RightAlt release")
+	waitStart := time.Now()
 	waitForRightAltRelease()
+	log.Info("[TYPE] typeText: RightAlt released", "waitDuration", time.Since(waitStart).Round(time.Millisecond))
 
 	// Restore the window that was focused when recording started
 	if targetHwnd != 0 {
 		currentHwnd, _, _ := pGetForegroundWindow.Call()
 		if currentHwnd != targetHwnd {
-			log.Info("typeText: restoring foreground window", "target", fmt.Sprintf("0x%X", targetHwnd), "current", fmt.Sprintf("0x%X", currentHwnd))
+			log.Info("[TYPE] typeText: calling SetForegroundWindow", "target", fmt.Sprintf("0x%X", targetHwnd), "current", fmt.Sprintf("0x%X", currentHwnd))
 			pSetForegroundWindow.Call(targetHwnd)
 			time.Sleep(50 * time.Millisecond) // let window activate
 		}
 	}
 
 	// Pre-type delay to let focus settle
-	time.Sleep(150 * time.Millisecond)
+	const preTypeDelay = 150 * time.Millisecond
+	log.Info("[TYPE] typeText: pre-type delay", "delay", preTypeDelay)
+	time.Sleep(preTypeDelay)
 
 	failCount := 0
 	for i, ch := range text {
@@ -78,16 +84,16 @@ func typeText(text string, targetHwnd uintptr, log *slog.Logger) {
 		if ret == 0 {
 			failCount++
 			if failCount <= 5 { // log first 5 failures to avoid spam
-				log.Error("typeText: SendInput failed", "charIndex", i, "char", string(ch), "charCode", int(ch))
+				log.Error("[TYPE] typeText: SendInput failed", "charIndex", i, "char", string(ch), "charCode", int(ch))
 			}
 		}
 		time.Sleep(time.Millisecond)
 	}
 
 	if failCount > 0 {
-		log.Error("typeText: SendInput failures", "failed", failCount, "total", len([]rune(text)))
+		log.Error("[TYPE] typeText: SendInput failures", "failed", failCount, "total", len([]rune(text)))
 	} else {
-		log.Info("typeText: completed successfully", "chars", len([]rune(text)))
+		log.Info("[TYPE] typeText: completed successfully", "chars", len([]rune(text)))
 	}
 }
 
@@ -114,10 +120,13 @@ func pcmToWAV(pcm []byte) []byte {
 
 // ── Whisper API ────────────────────────────────────────────────────
 
-func transcribeWhisper(pcm []byte, apiKey, lang string, log *slog.Logger) (string, error) {
+// transcribeWhisper calls OpenAI Whisper once. For retries, wrap in withRetry.
+// The ctx controls cancellation — if cancelled, the in-flight HTTP call is
+// aborted promptly.
+func transcribeWhisper(ctx context.Context, pcm []byte, apiKey, lang string, log *slog.Logger) (string, error) {
 	t0 := time.Now()
 	duration := float64(len(pcm)) / float64(avgBytesPerSec)
-	log.Info("Whisper: preparing audio", "pcmBytes", len(pcm), "duration", fmt.Sprintf("%.1fs", duration))
+	log.Info("[WH] Whisper: preparing audio", "pcmBytes", len(pcm), "duration", fmt.Sprintf("%.1fs", duration))
 	wav := pcmToWAV(pcm)
 
 	var body bytes.Buffer
@@ -129,32 +138,38 @@ func transcribeWhisper(pcm []byte, apiKey, lang string, log *slog.Logger) (strin
 	w.WriteField("prompt", whisperPrompt)
 	w.Close()
 
-	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/audio/transcriptions", &body)
+	const whisperURL = "https://api.openai.com/v1/audio/transcriptions"
+	log.Info("[WH] Whisper: sending HTTP request", "url", whisperURL, "contentLength", body.Len())
+	req, err := http.NewRequestWithContext(ctx, "POST", whisperURL, &body)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := whisperHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("HTTP: %w", err)
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("API %d: %s", resp.StatusCode, rb)
+		return "", &httpStatusError{StatusCode: resp.StatusCode, Body: string(rb)}
 	}
 
 	var res struct{ Text string }
 	json.Unmarshal(rb, &res)
 	text := strings.TrimSpace(res.Text)
-	log.Info("Whisper API", "elapsed", time.Since(t0).Round(time.Millisecond), "text", text)
+	log.Info("[WH] Whisper API", "elapsed", time.Since(t0).Round(time.Millisecond), "text", text)
 	return text, nil
 }
 
-// transcribeElevenLabsREST calls ElevenLabs Scribe v2 REST API for non-streaming transcription.
-func transcribeElevenLabsREST(pcm []byte, apiKey, lang string, log *slog.Logger) (string, error) {
+// transcribeElevenLabsREST calls ElevenLabs Scribe v2 REST API once.
+// For retries, wrap in withRetry.
+func transcribeElevenLabsREST(ctx context.Context, pcm []byte, apiKey, lang string, log *slog.Logger) (string, error) {
 	t0 := time.Now()
 	duration := float64(len(pcm)) / float64(avgBytesPerSec)
-	log.Info("ElevenLabs REST: preparing audio", "pcmBytes", len(pcm), "duration", fmt.Sprintf("%.1fs", duration))
+	log.Info("[EL] ElevenLabs REST: preparing audio", "pcmBytes", len(pcm), "duration", fmt.Sprintf("%.1fs", duration))
 	wav := pcmToWAV(pcm)
 
 	var body bytes.Buffer
@@ -170,72 +185,44 @@ func transcribeElevenLabsREST(pcm []byte, apiKey, lang string, log *slog.Logger)
 	}
 	w.Close()
 
-	req, _ := http.NewRequest("POST", "https://api.elevenlabs.io/v1/speech-to-text", &body)
+	const elevenLabsURL = "https://api.elevenlabs.io/v1/speech-to-text"
+	log.Info("[EL] ElevenLabs REST: sending HTTP request", "url", elevenLabsURL, "contentLength", body.Len(), "keyterms", len(techTerms))
+	req, err := http.NewRequestWithContext(ctx, "POST", elevenLabsURL, &body)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
 	req.Header.Set("xi-api-key", apiKey)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := elevenLabsRESTHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("HTTP: %w", err)
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("API %d: %s", resp.StatusCode, rb)
+		return "", &httpStatusError{StatusCode: resp.StatusCode, Body: string(rb)}
 	}
 
 	var res struct{ Text string }
 	json.Unmarshal(rb, &res)
 	text := strings.TrimSpace(res.Text)
-	log.Info("ElevenLabs REST API", "elapsed", time.Since(t0).Round(time.Millisecond), "text", text)
+	log.Info("[EL] ElevenLabs REST API", "elapsed", time.Since(t0).Round(time.Millisecond), "text", text)
 	return text, nil
 }
 
-// transcribeParallelFallback runs Whisper and ElevenLabs REST in parallel, returns first success.
-func transcribeParallelFallback(pcm []byte, whisperKey, elevenLabsKey, lang string, log *slog.Logger) (text string, usedBackend string, err error) {
-	type result struct {
-		text    string
-		backend string
-		err     error
-	}
-	ch := make(chan result, 2)
+// httpStatusError is returned by REST backends on non-2xx responses so that
+// classifyErr can distinguish transient (5xx/429) from permanent (4xx) failures.
+type httpStatusError struct {
+	StatusCode int
+	Body       string
+}
 
-	if whisperKey != "" {
-		go func() {
-			t, e := transcribeWhisper(pcm, whisperKey, lang, log)
-			ch <- result{t, "whisper_fallback", e}
-		}()
+func (e *httpStatusError) Error() string {
+	// Truncate body to keep error strings manageable in logs
+	body := e.Body
+	if len(body) > 200 {
+		body = body[:200] + "..."
 	}
-	if elevenLabsKey != "" {
-		go func() {
-			t, e := transcribeElevenLabsREST(pcm, elevenLabsKey, lang, log)
-			ch <- result{t, "elevenlabs_rest_fallback", e}
-		}()
-	}
-
-	expected := 0
-	if whisperKey != "" {
-		expected++
-	}
-	if elevenLabsKey != "" {
-		expected++
-	}
-	if expected == 0 {
-		return "", "", fmt.Errorf("no fallback API keys available")
-	}
-
-	// Collect results — return first success
-	var lastErr error
-	for i := 0; i < expected; i++ {
-		r := <-ch
-		if r.err == nil && r.text != "" {
-			log.Info("Parallel fallback succeeded", "backend", r.backend)
-			return r.text, r.backend, nil
-		}
-		if r.err != nil {
-			log.Warn("Parallel fallback attempt failed", "backend", r.backend, "err", r.err)
-			lastErr = r.err
-		}
-	}
-	return "", "", lastErr
+	return fmt.Sprintf("API %d: %s", e.StatusCode, body)
 }
