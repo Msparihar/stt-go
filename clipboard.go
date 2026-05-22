@@ -77,6 +77,19 @@ type bitmapInfoHeader struct {
 	ClrImportant  uint32
 }
 
+// validateDIBBounds checks if DIB dimensions are valid.
+func validateDIBBounds(width, height int32) error {
+	w := int(width)
+	h := int(height)
+	if h < 0 {
+		h = -h
+	}
+	if w <= 0 || h <= 0 || w > 32768 || h > 32768 || int64(w)*int64(h) > 100_000_000 {
+		return fmt.Errorf("dib dimensions out of bounds: %dx%d", int(width), int(height))
+	}
+	return nil
+}
+
 // ── Clipboard paste-path feature ─────────────────────────────────
 
 const clipboardHotkeyID = 1
@@ -237,12 +250,8 @@ func saveDIBtoPNG(format uintptr, log *slog.Logger) (string, error) {
 
 	width := int(hdr.Width)
 	height := int(hdr.Height)
-	rawHeight := hdr.Height
-	if rawHeight < 0 {
-		rawHeight = -rawHeight
-	}
-	if width <= 0 || rawHeight <= 0 || width > 32768 || rawHeight > 32768 || int64(width)*int64(rawHeight) > 100_000_000 {
-		return "", fmt.Errorf("dib dimensions out of bounds: %dx%d", width, height)
+	if err := validateDIBBounds(hdr.Width, hdr.Height); err != nil {
+		return "", err
 	}
 	bottomUp := true
 	if height < 0 {
