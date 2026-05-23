@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: Msparihar.stt-go
+PackageVersion: 1.1.0
+PackageLocale: en-US
+Publisher: Manish Singh Parihar
+PublisherUrl: https://github.com/Msparihar
+PublisherSupportUrl: https://github.com/Msparihar/stt-go/issues
+PackageName: stt-go
+PackageUrl: https://github.com/Msparihar/stt-go
+License: MIT
+LicenseUrl: https://github.com/Msparihar/stt-go/blob/main/LICENSE
+ShortDescription: Windows hotkey-to-dictation tool with Whisper, Deepgram, ElevenLabs, and Groq backends.
+Description: |-
+  STT-Go is a Windows-only dictation tool. Hold Right-Alt, speak, release — the transcript is typed into the focused window.
+  Runs a streaming backend and a REST backend in parallel and uses whichever finishes first, so you get streaming-speed latency with REST-grade accuracy as a fallback.
+  Six backends supported: OpenAI Whisper (REST + SSE + Realtime WebSocket), Deepgram Nova-3, ElevenLabs Scribe (streaming + batch), and Groq Whisper.
+  System tray, configurable hotkey, keyterm hinting, regex replacements, clipboard image passthrough.
+Moniker: stt-go
+Tags:
+  - dictation
+  - speech-to-text
+  - whisper
+  - deepgram
+  - elevenlabs
+  - groq
+  - hotkey
+  - productivity
+  - golang
+  - windows
+ReleaseNotesUrl: https://github.com/Msparihar/stt-go/releases/tag/v1.1.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

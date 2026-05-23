@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: Msparihar.stt-go
+PackageVersion: 1.1.0
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: stt-go.exe
+    PortableCommandAlias: stt-go
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/Msparihar/stt-go/releases/download/v1.1.0/stt-go_1.1.0_windows_amd64.zip
+    InstallerSha256: 360D9FC75AF3B72801B5D8D2A9382A51CF05E2BEC71825F6003AE0A49CB31170
+ManifestType: installer
+ManifestVersion: 1.6.0
