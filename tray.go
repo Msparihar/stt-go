@@ -105,6 +105,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			"elevenlabs":       "ElevenLabs Scribe",
 			"whisper_stream":   "Whisper (streaming)",
 			"whisper_realtime": "Whisper (realtime)",
+			"groq":             "Groq Whisper",
 		}[backend]
 		if backendLabel == "" {
 			backendLabel = backend
@@ -154,6 +155,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		mWhisper := mBackendMenu.AddSubMenuItem("Whisper (OpenAI)", "")
 		mWhisperStream := mBackendMenu.AddSubMenuItem("Whisper (streaming)", "")
 		mWhisperRealtime := mBackendMenu.AddSubMenuItem("Whisper (realtime)", "")
+		mGroq := mBackendMenu.AddSubMenuItem("Groq Whisper", "")
 		switch backend {
 		case "deepgram":
 			mDeepgram.Check()
@@ -165,6 +167,8 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mWhisperStream.Check()
 		case "whisper_realtime":
 			mWhisperRealtime.Check()
+		case "groq":
+			mGroq.Check()
 		default:
 			mWhisper.Check()
 		}
@@ -175,6 +179,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mWhisper.Uncheck()
 			mWhisperStream.Uncheck()
 			mWhisperRealtime.Uncheck()
+			mGroq.Uncheck()
 		}
 		mDeepgram.Click(func() {
 			uncheckAllBackends()
@@ -211,6 +216,30 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mWhisperRealtime.Check()
 			svc.switchBackend("whisper_realtime")
 			mInfo.SetTitle("STT-Go (Whisper realtime)")
+		})
+		mGroq.Click(func() {
+			uncheckAllBackends()
+			mGroq.Check()
+			svc.switchBackend("groq")
+			mInfo.SetTitle("STT-Go (Groq Whisper)")
+		})
+
+		systray.AddSeparator()
+		mStreaming := systray.AddMenuItem("Real-time streaming", "Stream audio live as you speak")
+		if appConfig.StreamingMode {
+			mStreaming.Check()
+		}
+		mStreaming.Click(func() {
+			appConfig.StreamingMode = !appConfig.StreamingMode
+			if appConfig.StreamingMode {
+				mStreaming.Check()
+			} else {
+				mStreaming.Uncheck()
+			}
+			if err := saveConfig(appConfig); err != nil {
+				log.Error("[CFG] Failed to save streaming mode", "err", err)
+			}
+			log.Info("[CFG] Streaming mode toggled", "enabled", appConfig.StreamingMode)
 		})
 
 		systray.AddSeparator()

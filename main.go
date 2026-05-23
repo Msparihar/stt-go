@@ -139,6 +139,10 @@ func readEnvKey(name string) string {
 			if appConfig.APIKeys.ElevenLabs != "" {
 				return appConfig.APIKeys.ElevenLabs
 			}
+		case "GROQ_API_KEY":
+			if appConfig.APIKeys.Groq != "" {
+				return appConfig.APIKeys.Groq
+			}
 		}
 	}
 
