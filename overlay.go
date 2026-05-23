@@ -111,10 +111,6 @@ type d2dColorF struct {
 	R, G, B, A float32
 }
 
-type d2dPointF struct {
-	X, Y float32
-}
-
 type d2dRoundedRect struct {
 	Left, Top, Right, Bottom float32
 	RadiusX, RadiusY         float32

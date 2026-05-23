@@ -67,19 +67,6 @@ func listMics() []micDevice {
 	return mics
 }
 
-func getDefaultMicName() string {
-	numDevs, _, _ := pWaveInGetNumDevs.Call()
-	if numDevs == 0 {
-		return "No microphone found"
-	}
-	var caps waveInCapsW
-	ret, _, _ := pWaveInGetDevCapsW.Call(0, uintptr(unsafe.Pointer(&caps)), unsafe.Sizeof(caps))
-	if ret != 0 {
-		return "Unknown microphone"
-	}
-	return windows.UTF16ToString(caps.ProductName[:])
-}
-
 // ── Audio recorder ─────────────────────────────────────────────────
 
 type recorder struct {

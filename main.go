@@ -116,7 +116,6 @@ var (
 
 	pMoveWindow         = user32.NewProc("MoveWindow")
 	pCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
-	pDeleteObject       = gdi32.NewProc("DeleteObject")
 	pD2D1CreateFactory  = d2d1.NewProc("D2D1CreateFactory")
 )
 

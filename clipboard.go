@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color"
@@ -13,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 	"unsafe"
 
@@ -23,12 +21,10 @@ import (
 // ── Clipboard constants ──────────────────────────────────────────
 
 const (
-	cfBitmap      = 2
-	cfDIB         = 8
-	cfDIBV5       = 17
-	cfHDROP       = 15
-	cfUnicodeText = 13
-	gmemMoveable  = 0x0002
+	cfBitmap = 2
+	cfDIB    = 8
+	cfDIBV5  = 17
+	cfHDROP  = 15
 
 	modCtrl  = 0x0002
 	modShift = 0x0004
@@ -45,15 +41,12 @@ var (
 
 	pOpenClipboard       = user32.NewProc("OpenClipboard")
 	pCloseClipboard      = user32.NewProc("CloseClipboard")
-	pEmptyClipboard      = user32.NewProc("EmptyClipboard")
 	pGetClipboardData    = user32.NewProc("GetClipboardData")
-	pSetClipboardData    = user32.NewProc("SetClipboardData")
 	pIsClipboardFmtAvail = user32.NewProc("IsClipboardFormatAvailable")
 	pRegisterHotKey      = user32.NewProc("RegisterHotKey")
 	pUnregisterHotKey    = user32.NewProc("UnregisterHotKey")
 
-	pGlobalAlloc = kernel32.NewProc("GlobalAlloc")
-	pGlobalLock  = kernel32.NewProc("GlobalLock")
+	pGlobalLock   = kernel32.NewProc("GlobalLock")
 	pGlobalUnlock = kernel32.NewProc("GlobalUnlock")
 
 	pDragQueryFileW = shell32.NewProc("DragQueryFileW")
@@ -326,62 +319,6 @@ func saveDIBtoPNG(format uintptr, log *slog.Logger) (string, error) {
 
 	log.Info("[CLIP] saved image", "path", savePath, "size", fmt.Sprintf("%dx%d", width, height))
 	return savePath, nil
-}
-
-// setClipboardText sets the clipboard content to a text string.
-// Clipboard must NOT be open when calling this.
-func setClipboardText(text string, log *slog.Logger) error {
-	ret, _, _ := pOpenClipboard.Call(0)
-	if ret == 0 {
-		return fmt.Errorf("cannot open clipboard")
-	}
-	defer pCloseClipboard.Call()
-
-	pEmptyClipboard.Call()
-
-	utf16 := windows.StringToUTF16(text)
-	size := len(utf16) * 2
-
-	hMem, _, _ := pGlobalAlloc.Call(gmemMoveable, uintptr(size))
-	if hMem == 0 {
-		return fmt.Errorf("GlobalAlloc failed")
-	}
-
-	ptr, _, _ := pGlobalLock.Call(hMem)
-	if ptr == 0 {
-		return fmt.Errorf("GlobalLock failed")
-	}
-
-	dst := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), size)
-	for i, v := range utf16 {
-		binary.LittleEndian.PutUint16(dst[i*2:], v)
-	}
-	pGlobalUnlock.Call(hMem)
-
-	ret, _, _ = pSetClipboardData.Call(cfUnicodeText, hMem)
-	if ret == 0 {
-		return fmt.Errorf("SetClipboardData failed")
-	}
-
-	log.Info("[CLIP] set text", "text", truncate(text, 80))
-	return nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "..."
-	}
-	return s
-}
-
-// isImageFile checks if a path looks like an image file.
-func isImageFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".tiff", ".svg":
-		return true
-	}
-	return false
 }
 
 // ── Hotkey message loop ──────────────────────────────────────────
