@@ -26,7 +26,7 @@ archives:
 
 release:
   github:
-    owner: manishsparihar32
+    owner: Msparihar
     name: stt-go
   draft: false
   prerelease: auto

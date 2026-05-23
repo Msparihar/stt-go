@@ -1,0 +1,71 @@
+name: Bug report
+description: Report something that doesn't work as documented.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Before submitting, please check open issues to see if this has already been reported.
+  - type: input
+    id: version
+    attributes:
+      label: STT-Go version
+      description: Run `stt-go.exe --version`, or paste the release tag you downloaded.
+      placeholder: "v1.1.0 (or commit hash if built from source)"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: From `winver`, e.g. "Windows 11 23H2 build 22631.3447".
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Transcription backend selected
+      options:
+        - whisper_stream (default)
+        - api (Whisper REST)
+        - whisper_realtime
+        - elevenlabs
+        - elevenlabs_batch
+        - deepgram
+        - groq
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What did you do? Be specific about the hotkey, the focused window, and what you said.
+      placeholder: |
+        1. Open Notepad
+        2. Hold Right-Alt
+        3. Say "hello world"
+        4. Release
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: Paste the relevant lines from `stt-go.log` (located next to `stt-go.exe` or under `%APPDATA%\stt-go\`). Redact any API keys before pasting.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I redacted API keys and other secrets from the log excerpt above.
+          required: true
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
