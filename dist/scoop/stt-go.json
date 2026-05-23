@@ -1,0 +1,27 @@
+{
+    "version": "1.1.0",
+    "description": "Windows hotkey-to-dictation tool. Hold Right-Alt, speak, release — text appears in the focused window. Whisper / Deepgram / ElevenLabs / Groq backends.",
+    "homepage": "https://github.com/Msparihar/stt-go",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/Msparihar/stt-go/releases/download/v1.1.0/stt-go_1.1.0_windows_amd64.zip",
+            "hash": "TODO_SHA256_FROM_GORELEASER_CHECKSUMS_TXT",
+            "extract_dir": ""
+        }
+    },
+    "bin": "stt-go.exe",
+    "checkver": {
+        "github": "https://github.com/Msparihar/stt-go"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/Msparihar/stt-go/releases/download/v$version/stt-go_$version_windows_amd64.zip"
+            }
+        },
+        "hash": {
+            "url": "$baseurl/checksums.txt"
+        }
+    }
+}
