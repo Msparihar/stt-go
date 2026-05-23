@@ -12,7 +12,7 @@ I aim to acknowledge within 72 hours and ship a fix or mitigation within 14 days
 
 ## What this app stores locally
 
-- **API keys** for the configured speech-to-text providers (OpenAI / Deepgram / ElevenLabs / Groq). Today they sit in plaintext inside `%APPDATA%\stt-go\config.json` (or the repo-local `config.json` when run from source). A migration to Windows Credential Manager is on the roadmap — when it lands, that becomes the default and `config.json` becomes a fallback with a startup warning.
+- **API keys** for the configured speech-to-text providers (OpenAI / Deepgram / ElevenLabs / Groq). They are stored in plaintext inside `config.json` (next to `stt-go.exe`) or in `~/.env.local` — whichever you choose at setup. Bring your own credentials; treat that file the same way you'd treat any other dotenv. The app never transmits keys anywhere except to the provider you configured them for.
 - **Captured audio** in `debug-audio\` and `failed-audio\` (PCM `.wav` files). These are local only; the app never uploads them anywhere except to the transcription provider you selected, and only the audio for the current recording. Old captures are auto-cleaned on startup, but you should still clear those directories if you record sensitive content.
 - **Transcription logs** in `stt-go.log`, including full transcripts. Logs rotate and old ones are gzipped. Treat the log directory as you would treat the transcripts themselves.
 
