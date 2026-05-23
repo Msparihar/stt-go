@@ -24,11 +24,12 @@ Source: audit run 2026-05-23 (current score **38/100**, target **90+**). Each ta
 | 9 | Drop cross-platform claims from all docs/code | honesty | 30 min | ☐ |
 | 10 | Submit winget manifest | distribution | 2 hr | ☐ |
 | 11 | Submit scoop manifest | distribution | 1 hr | ☐ |
-| 12 | Migrate keys to Windows Credential Manager | security | 4 hr | ☐ |
 | 13 | Apply for SignPath OSS code-signing | trust | 1 hr apply + wait | ☐ |
 | 14 | Wire SignPath into GoReleaser | trust | 1 hr after approval | ☐ |
 
-Tasks 1–9 push the score past 70. Add 10–11 for ~80. Add 12–14 for 90+.
+Tasks 1–9 push the score past 70. Add 10–11 for ~80. Add 13–14 for 90+.
+
+**Task 12 (Credential Manager) — out of scope.** Keys stay plaintext in `config.json` / `~/.env.local`. This is a BYO-credential local tool; users manage their own secrets the same way they would any dotenv. A dormant local branch `feat/credential-manager` has an implementation if we ever change our minds.
 
 ---
 
@@ -341,53 +342,9 @@ of the obvious flow.
 
 ---
 
-## Task 12 — Windows Credential Manager for keys
+## Task 12 — *(removed)* Windows Credential Manager
 
-**Subagent: `general-purpose`. Effort: 4 hr. Depends on: 1.**
-
-```text
-Migrate API key storage from plaintext config.json to Windows
-Credential Manager, keeping config.json as a fallback with a runtime
-warning.
-
-Current implementation:
-- Key load order at /mnt/c/Users/manis/scripts/stt-go/main.go:126-160:
-  config.json api_keys.<name> → env var → ~/.env.local file.
-- Config struct at config.go:25-32 has the api_keys block.
-
-Target:
-1. Insert a NEW first-priority lookup: Windows Credential Manager
-   via golang.org/x/sys/windows. Use the `CredRead` /
-   `CredWrite` Win32 APIs (the package wraps them as
-   `windows.CredRead` / `CredWrite`). Target name format:
-   "stt-go:<KEY_NAME>" e.g. "stt-go:OPENAI_API_KEY". Type:
-   CRED_TYPE_GENERIC.
-2. Update --setup wizard in config.go:156 to offer "save to
-   Credential Manager (recommended)" vs "save to config.json".
-   Default to Credential Manager.
-3. If a key is read from config.json and Credential Manager is
-   empty, log a one-time WARN: "[CFG] <KEY> is stored in plaintext
-   config.json — run `stt-go.exe --setup` to migrate to Credential
-   Manager".
-4. Add tests in main_test.go (new file) that mock the credential
-   read path. Do NOT call real CredRead in tests.
-5. Update SECURITY.md (created in task 7) to reflect Credential
-   Manager is now the default.
-
-Verification:
-- `go build -ldflags '-H windowsgui'` succeeds.
-- `go vet ./...` clean.
-- `go test -race ./...` passes (the existing tests must still pass).
-- Manual: run `stt-go.exe --setup`, enter test key, confirm it lands
-  in Credential Manager (`cmdkey /list` shows "stt-go:OPENAI_API_KEY").
-
-Commit on `feat/credential-manager` branch:
-"feat: store API keys in Windows Credential Manager (config.json fallback)"
-
-Comment discipline: No comments unless the WHY is non-obvious.
-No JSDoc. No step-narration comments. No file-header explanations
-of the obvious flow.
-```
+Decided against in 2026-05-23 session. STT-Go is BYO-credential — users are responsible for their own keys the same way they'd treat any dotenv. The plaintext `config.json` / `~/.env.local` flow stays the only path. An implementation exists on the dormant local branch `feat/credential-manager` (commit `9675f5d`, 311 LOC, 15 tests green) if priorities change.
 
 ---
 
