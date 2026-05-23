@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,6 +38,8 @@ type sttService struct {
 	backend    string
 	lang       string
 	apiKey     string
+	openaiKey  string // cached at startup; avoids hot-path file reads
+	groqKey    string // cached at startup; avoids hot-path file reads
 	rec        *recorder
 	dgc        *dgConn
 	elc        *elConn
@@ -45,25 +48,37 @@ type sttService struct {
 	overlay    *waveOverlay
 	recT0      time.Time
 	targetHwnd uintptr // foreground window when recording started
+
+	// Real-time streaming state (non-nil only while a streaming session is active)
+	rtSession   *rtSession
+	rtTyper     *rtTyper
+	rtMu        sync.Mutex
+	rtFinalText string
+	rtCtxCancel context.CancelFunc
 }
 
 func newSTTService(backend, lang string, log *slog.Logger) *sttService {
 	s := &sttService{backend: backend, lang: lang, rec: newRecorder(log), log: log}
+
+	// Cache keys that are needed across multiple backends or on every recording.
+	s.openaiKey = readEnvKey("OPENAI_API_KEY")
+	s.groqKey = readEnvKey("GROQ_API_KEY")
+
 	switch backend {
 	case "api":
-		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		s.apiKey = s.openaiKey
 		if s.apiKey == "" {
 			log.Error("[SVC] OPENAI_API_KEY not found")
 		}
 		log.Info("[SVC] OpenAI client ready")
 	case "whisper_stream":
-		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		s.apiKey = s.openaiKey
 		if s.apiKey == "" {
 			log.Error("[SVC] OPENAI_API_KEY not found")
 		}
 		log.Info("[SVC] Whisper streaming client ready")
 	case "whisper_realtime":
-		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		s.apiKey = s.openaiKey
 		if s.apiKey == "" {
 			log.Error("[SVC] OPENAI_API_KEY not found")
 		}
@@ -88,6 +103,12 @@ func newSTTService(backend, lang string, log *slog.Logger) *sttService {
 			log.Error("[SVC] ELEVENLABS_API_KEY not found")
 		}
 		log.Info("[SVC] ElevenLabs batch client ready (REST upload with keyterms)")
+	case "groq":
+		s.apiKey = s.groqKey
+		if s.apiKey == "" {
+			log.Error("[SVC] GROQ_API_KEY not found")
+		}
+		log.Info("[SVC] Groq Whisper client ready")
 	}
 	log.Info("[SVC] STT Service initialized", "backend", backend, "language", lang)
 	return s
@@ -112,19 +133,19 @@ func (s *sttService) switchBackend(backend string) {
 	s.backend = backend
 	switch backend {
 	case "api":
-		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		s.apiKey = s.openaiKey
 		if s.apiKey == "" {
 			s.log.Error("[SVC] OPENAI_API_KEY not found")
 		}
 		s.log.Info("[SVC] Switched to Whisper")
 	case "whisper_stream":
-		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		s.apiKey = s.openaiKey
 		if s.apiKey == "" {
 			s.log.Error("[SVC] OPENAI_API_KEY not found")
 		}
 		s.log.Info("[SVC] Switched to Whisper Streaming")
 	case "whisper_realtime":
-		s.apiKey = readEnvKey("OPENAI_API_KEY")
+		s.apiKey = s.openaiKey
 		if s.apiKey == "" {
 			s.log.Error("[SVC] OPENAI_API_KEY not found")
 		}
@@ -149,6 +170,12 @@ func (s *sttService) switchBackend(backend string) {
 			s.log.Error("[SVC] ELEVENLABS_API_KEY not found")
 		}
 		s.log.Info("[SVC] Switched to ElevenLabs Batch (REST upload with keyterms)")
+	case "groq":
+		s.apiKey = s.groqKey
+		if s.apiKey == "" {
+			s.log.Error("[SVC] GROQ_API_KEY not found")
+		}
+		s.log.Info("[SVC] Switched to Groq Whisper")
 	}
 }
 

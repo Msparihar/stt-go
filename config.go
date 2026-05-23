@@ -19,10 +19,14 @@ type Config struct {
 	MicDevice      string            `json:"mic_device,omitempty"` // saved mic name, empty = system default
 	Keyterms       []string          `json:"keyterms"`
 	Replacements   map[string]string `json:"replacements"` // from -> to
+	StreamingMode  bool              `json:"streaming_mode"`
+	RealtimeModel  string            `json:"realtime_model,omitempty"` // default "gpt-4o-mini-transcribe"
+	GroqModel      string            `json:"groq_model,omitempty"`     // default "whisper-large-v3"
 	APIKeys        struct {
 		Deepgram   string `json:"deepgram"`
 		OpenAI     string `json:"openai"`
 		ElevenLabs string `json:"elevenlabs"`
+		Groq       string `json:"groq"`
 	} `json:"api_keys"`
 }
 
