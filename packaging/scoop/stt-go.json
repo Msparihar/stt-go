@@ -6,7 +6,7 @@
     "architecture": {
         "64bit": {
             "url": "https://github.com/Msparihar/stt-go/releases/download/v1.1.0/stt-go_1.1.0_windows_amd64.zip",
-            "hash": "TODO_SHA256_FROM_GORELEASER_CHECKSUMS_TXT",
+            "hash": "360d9fc75af3b72801b5d8d2a9382a51cf05e2bec71825f6003ae0a49cb31170",
             "extract_dir": ""
         }
     },
