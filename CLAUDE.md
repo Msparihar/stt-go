@@ -137,7 +137,7 @@ grep "\[KEY\]\|\[REC\]\|\[DG\]\|\[RACE\]\|\[STT\]" stt-go.log | tail -40
 ## Git & Releases
 
 - Repo: https://github.com/Msparihar/stt-go
-- License: Elastic License 2.0 (ELv2)
+- License: MIT
 - Versioning: semver via git tags
 - GoReleaser config in `.goreleaser.yml`
 

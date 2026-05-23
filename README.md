@@ -77,4 +77,4 @@ Log file: `stt-go.log` (5 MB rotation, 3 backups). Filter by tag:
 
 ## License
 
-Elastic License 2.0 (ELv2). Free to use, modify, and distribute. Not for managed-service use.
+MIT License. See [LICENSE](LICENSE).
