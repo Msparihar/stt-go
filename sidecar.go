@@ -9,27 +9,33 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
 
-const (
-	defaultLocalWhisperPython = `D:\whisper-local\.venv\Scripts\pythonw.exe`
-	defaultLocalWhisperScript = `D:\whisper-local\server.py`
-)
-
+// localWhisperPython resolves the Python interpreter for the sidecar.
+// Priority: config.json local_whisper_python → <exeDir>/sidecar/.venv/Scripts/pythonw.exe → "pythonw" on PATH.
 func localWhisperPython() string {
 	if appConfig != nil && appConfig.LocalWhisperPython != "" {
 		return appConfig.LocalWhisperPython
 	}
-	return defaultLocalWhisperPython
+	exe, _ := os.Executable()
+	candidate := filepath.Join(filepath.Dir(exe), "sidecar", ".venv", "Scripts", "pythonw.exe")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate
+	}
+	return "pythonw"
 }
 
+// localWhisperScript resolves the sidecar script path.
+// Priority: config.json local_whisper_script → <exeDir>/sidecar/server.py.
 func localWhisperScript() string {
 	if appConfig != nil && appConfig.LocalWhisperScript != "" {
 		return appConfig.LocalWhisperScript
 	}
-	return defaultLocalWhisperScript
+	exe, _ := os.Executable()
+	return filepath.Join(filepath.Dir(exe), "sidecar", "server.py")
 }
 
 // localWhisperPort extracts the port from the configured transcribe URL so the
@@ -52,11 +58,17 @@ func localWhisperPort() string {
 // stale server.py instance, so a single fresh sidecar can own the port. This is
 // what eliminates the old race between the app and the separate scheduled task.
 func freeLocalWhisperPort(port string, log *slog.Logger) {
+	// Match the resolved script path (both slash styles) so the stale-process
+	// sweep works whether the script lives in sidecar/ or a config-set path.
+	script := localWhisperScript()
+	esc := func(s string) string { return strings.ReplaceAll(s, "'", "''") }
+	back := esc(strings.ReplaceAll(script, "/", `\`))
+	fwd := esc(strings.ReplaceAll(script, `\`, "/"))
 	ps := `$p=` + port + `;` +
 		`Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue |` +
 		` ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue };` +
 		`Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |` +
-		` Where-Object { $_.CommandLine -like '*whisper-local\server.py*' } |` +
+		` Where-Object { $_.CommandLine -like '*` + back + `*' -or $_.CommandLine -like '*` + fwd + `*' } |` +
 		` ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
@@ -67,7 +79,7 @@ func freeLocalWhisperPort(port string, log *slog.Logger) {
 }
 
 // spawnLocalWhisperSidecar launches server.py detached, with stdout/stderr
-// redirected to D:\whisper-local\server.out.log for debugging.
+// redirected to server.out.log in the same directory as the script.
 func spawnLocalWhisperSidecar(port string, log *slog.Logger) error {
 	python, script := localWhisperPython(), localWhisperScript()
 	cmd := exec.Command(python, script)

@@ -23,8 +23,8 @@ type Config struct {
 	RealtimeModel  string            `json:"realtime_model,omitempty"` // default "gpt-4o-mini-transcribe"
 	GroqModel      string            `json:"groq_model,omitempty"`     // default "whisper-large-v3"
 	LocalWhisperURL    string        `json:"local_whisper_url,omitempty"`    // default http://127.0.0.1:5111/transcribe
-	LocalWhisperPython string        `json:"local_whisper_python,omitempty"` // default D:\whisper-local\.venv\Scripts\pythonw.exe
-	LocalWhisperScript string        `json:"local_whisper_script,omitempty"` // default D:\whisper-local\server.py
+	LocalWhisperPython string        `json:"local_whisper_python,omitempty"` // default <exeDir>/sidecar/.venv/Scripts/pythonw.exe, then pythonw on PATH
+	LocalWhisperScript string        `json:"local_whisper_script,omitempty"` // default <exeDir>/sidecar/server.py
 	APIKeys        struct {
 		Deepgram   string `json:"deepgram"`
 		OpenAI     string `json:"openai"`

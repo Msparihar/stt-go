@@ -113,7 +113,7 @@ func transcribeWhisperLocal(ctx context.Context, pcm []byte, log *slog.Logger) (
 
 	resp, err := whisperLocalHTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("HTTP: %w (is the sidecar running? D:\\whisper-local\\server.py)", err)
+		return "", fmt.Errorf("HTTP: %w (is the sidecar running? check stt-go.log for [LOCAL] entries)", err)
 	}
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)

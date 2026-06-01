@@ -22,7 +22,7 @@ Most dictation tools are either locked to one vendor, slow because they wait for
 
 ## Features
 
-- **6 transcription backends.** OpenAI Whisper (REST), Whisper streaming (SSE), Whisper Realtime (WebSocket), Deepgram Nova-3, ElevenLabs Scribe (streaming + batch), and Groq Whisper. Pick one or let race mode decide.
+- **7 transcription backends.** OpenAI Whisper (REST), Whisper streaming (SSE), Whisper Realtime (WebSocket), Deepgram Nova-3, ElevenLabs Scribe (streaming + batch), Groq Whisper, and **Local Whisper (GPU, offline)**. Pick one or let race mode decide.
 - **Push-to-talk dictation.** Hold **Right-Alt**, speak, release. The transcript types itself into the focused window — works in your editor, browser, terminal, Slack, anywhere.
 - **System tray with live backend switching.** Right-click the tray icon to swap backends, change microphone, toggle real-time streaming, or quit — no restart needed.
 - **Clipboard image passthrough.** Press **Ctrl+Shift+V** and STT-Go grabs the clipboard image (or file), saves it under `~/Pictures/clipboard/clipboard_<timestamp>.png`, and types the full path into the focused window. Handy for pasting screenshots into agents that only accept file paths.
@@ -65,6 +65,7 @@ You only need one — pick the backend you want.
 | Deepgram | <https://console.deepgram.com/> |
 | ElevenLabs | <https://elevenlabs.io/app/settings/api-keys> |
 | Groq | <https://console.groq.com/keys> |
+| Local Whisper (GPU) | No key needed — see [Local Whisper setup](#local-whisper-gpu-offline) |
 
 ## First run
 
@@ -92,7 +93,7 @@ Or drop a `~/.env.local` file with the same names — STT-Go reads keys in this 
 
 Right-click the tray icon to:
 
-- Switch backend (Deepgram, ElevenLabs Scribe, ElevenLabs batch, Whisper, Whisper streaming, Whisper realtime, Groq Whisper)
+- Switch backend (Deepgram, ElevenLabs Scribe, ElevenLabs batch, Whisper, Whisper streaming, Whisper realtime, Groq Whisper, Whisper Local GPU)
 - Pick a microphone
 - Toggle real-time streaming
 - Restart or quit
@@ -117,13 +118,59 @@ release Right-Alt
 
 The 2-second `raceStreamingDeadline` is what makes the common case feel instant while the slow case still ships an answer.
 
+## Local Whisper (GPU, offline)
+
+STT-Go ships a Python sidecar (`sidecar/server.py`) that runs [faster-whisper](https://github.com/SYSTRAN/faster-whisper) locally on your GPU. No API key, no data leaving the machine, ~0.9 s per dictation on a 4 GB consumer GPU.
+
+**Requirements**
+
+- NVIDIA GPU with CUDA 12 runtime installed
+- ~2.4 GB VRAM while the model is loaded (`large-v3-turbo`; idle process uses ~240 MB)
+- Python 3.10+
+
+**Setup**
+
+```powershell
+cd sidecar
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+```
+
+The first time STT-Go activates the `whisper_local` backend it downloads `large-v3-turbo` (~1.6 GB) from Hugging Face into `sidecar/models/`. Subsequent loads are instant.
+
+**How it works**
+
+When you select "Whisper Local (GPU)" from the tray, STT-Go:
+
+1. Checks whether the sidecar is already running on `127.0.0.1:5111`.
+2. If not, spawns `sidecar/.venv/Scripts/pythonw.exe sidecar/server.py` in the background (hidden window, log at `sidecar/server.out.log`).
+3. Sends `POST /load` to pull the model into VRAM.
+4. On every dictation, posts the WAV to `POST /transcribe` and receives JSON `{text}`.
+5. When you switch away, sends `POST /unload` to free VRAM.
+
+**Configuration** (optional overrides in `config.json`)
+
+| Field | Default | Purpose |
+|---|---|---|
+| `local_whisper_url` | `http://127.0.0.1:5111/transcribe` | Sidecar endpoint |
+| `local_whisper_python` | `<exeDir>/sidecar/.venv/Scripts/pythonw.exe` | Python interpreter path |
+| `local_whisper_script` | `<exeDir>/sidecar/server.py` | Sidecar script path |
+
+Override `WHISPER_MODEL` (default `large-v3-turbo`) or `WHISPER_PORT` (default `5111`) via environment variables before the sidecar starts.
+
+**Tray indicators**
+
+- Tray icon turns **red** when the backend is `whisper_local` but the sidecar is unreachable.
+- The "Local model:" status item in the tray menu shows `connected`, `idle (not loaded)`, or `offline`.
+- Use **"Restart local model"** from the tray to kill a stale sidecar and respawn it without restarting STT-Go.
+
 ## Configuration
 
 Config lives in `config.json` next to the executable. STT-Go creates a default one on first run.
 
 | Field | Purpose |
 |---|---|
-| `default_backend` | `deepgram`, `elevenlabs`, `elevenlabs_batch`, `api` (Whisper REST), `whisper_stream`, `whisper_realtime`, or `groq` |
+| `default_backend` | `deepgram`, `elevenlabs`, `elevenlabs_batch`, `api` (Whisper REST), `whisper_stream`, `whisper_realtime`, `groq`, or `whisper_local` |
 | `language` | Language code, e.g. `"en"` |
 | `mic_device` | Saved microphone name. Empty = system default |
 | `keyterms` | Vocabulary hints fed to Deepgram + Whisper |
@@ -131,6 +178,9 @@ Config lives in `config.json` next to the executable. STT-Go creates a default o
 | `streaming_mode` | Enable real-time streaming when the backend supports it |
 | `realtime_model` | OpenAI Realtime model id (default `gpt-4o-mini-transcribe`) |
 | `groq_model` | Groq model id (default `whisper-large-v3`) |
+| `local_whisper_url` | Sidecar endpoint (default `http://127.0.0.1:5111/transcribe`) |
+| `local_whisper_python` | Python interpreter for the sidecar (default: `<exeDir>/sidecar/.venv/Scripts/pythonw.exe`) |
+| `local_whisper_script` | Sidecar script path (default: `<exeDir>/sidecar/server.py`) |
 | `api_keys` | `deepgram`, `openai`, `elevenlabs`, `groq` |
 
 See [`config.example.json`](config.example.json) for a complete reference.
@@ -162,7 +212,6 @@ See [`config.example.json`](config.example.json) for a complete reference.
 - winget package
 - Per-app backend overrides (e.g. always use Whisper inside VS Code)
 - Custom hotkey binding via config
-- Local Whisper.cpp backend for fully offline use
 
 **Windows-only by design.** macOS / Linux are not on the roadmap — audio capture, hotkeys, and the overlay all use Win32 primitives (`waveIn`, Direct2D, `user32`) that would require a full rewrite per platform.
 
