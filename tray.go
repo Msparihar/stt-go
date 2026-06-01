@@ -11,6 +11,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sync/atomic"
+	"time"
 
 	"github.com/energye/systray"
 )
@@ -89,6 +91,19 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 	}
 	iconListen := makeICO(76, 175, 80, 255)
 	iconTranscribe := makeICO(255, 152, 0, 255)
+	iconOffline := makeICO(244, 67, 54, 255) // red — local sidecar unreachable
+
+	// Tray-icon color is the only colored surface available: energye/systray
+	// menu items can't carry icons, so menu text stays monochrome and the live
+	// local-model health is reflected in the tray icon while idle.
+	var localOffline atomic.Bool
+	var lastTrayState atomic.Int32
+	idleIcon := func() []byte {
+		if svc.backend == "whisper_local" && localOffline.Load() {
+			return iconOffline
+		}
+		return iconIdle
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -112,6 +127,50 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		}
 		mInfo := systray.AddMenuItem(fmt.Sprintf("STT-Go (%s)", backendLabel), "")
 		mInfo.Disable()
+
+		// Live status of the local Whisper sidecar (D:\whisper-local\server.py).
+		// Polled in the background so the user can see at a glance whether the
+		// GPU model is reachable without having to dictate and watch it fail.
+		mLocalStatus := systray.AddMenuItem("Local model: checking…", "Local Whisper GPU sidecar (127.0.0.1:5111)")
+		mLocalStatus.Disable()
+		go func() {
+			check := func() {
+				hctx, hcancel := context.WithTimeout(ctx, 2*time.Second)
+				defer hcancel()
+				reachable, loaded := localWhisperHealth(hctx)
+				localOffline.Store(!reachable)
+				switch {
+				case !reachable:
+					mLocalStatus.SetTitle("Local model: offline")
+				case loaded:
+					mLocalStatus.SetTitle("Local model: connected")
+				default:
+					mLocalStatus.SetTitle("Local model: idle (not loaded)")
+				}
+				if trayState(lastTrayState.Load()) == stateIdle {
+					systray.SetIcon(idleIcon())
+				}
+			}
+			check()
+			t := time.NewTicker(4 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					check()
+				}
+			}
+		}()
+
+		// Manual recovery: kill any stale sidecar, respawn it, and reload the
+		// model. Lets the user unstick the local backend without restarting the app.
+		mRestartLocal := systray.AddMenuItem("Restart local model", "Kill and respawn the Whisper GPU sidecar")
+		mRestartLocal.Click(func() {
+			mLocalStatus.SetTitle("Local model: restarting…")
+			restartLocalWhisperSidecar(log)
+		})
 
 		// Microphone submenu
 		mMicMenu := systray.AddMenuItem("Microphone", "Select input device")
@@ -156,6 +215,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		mWhisperStream := mBackendMenu.AddSubMenuItem("Whisper (streaming)", "")
 		mWhisperRealtime := mBackendMenu.AddSubMenuItem("Whisper (realtime)", "")
 		mGroq := mBackendMenu.AddSubMenuItem("Groq Whisper", "")
+		mWhisperLocal := mBackendMenu.AddSubMenuItem("Whisper Local (GPU)", "")
 		switch backend {
 		case "deepgram":
 			mDeepgram.Check()
@@ -169,6 +229,8 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mWhisperRealtime.Check()
 		case "groq":
 			mGroq.Check()
+		case "whisper_local":
+			mWhisperLocal.Check()
 		default:
 			mWhisper.Check()
 		}
@@ -180,6 +242,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mWhisperStream.Uncheck()
 			mWhisperRealtime.Uncheck()
 			mGroq.Uncheck()
+			mWhisperLocal.Uncheck()
 		}
 		mDeepgram.Click(func() {
 			uncheckAllBackends()
@@ -222,6 +285,12 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mGroq.Check()
 			svc.switchBackend("groq")
 			mInfo.SetTitle("STT-Go (Groq Whisper)")
+		})
+		mWhisperLocal.Click(func() {
+			uncheckAllBackends()
+			mWhisperLocal.Check()
+			svc.switchBackend("whisper_local")
+			mInfo.SetTitle("STT-Go (Whisper Local GPU)")
 		})
 
 		systray.AddSeparator()
@@ -271,9 +340,10 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		})
 
 		svc.onState = func(state trayState) {
+			lastTrayState.Store(int32(state))
 			switch state {
 			case stateIdle:
-				systray.SetIcon(iconIdle)
+				systray.SetIcon(idleIcon())
 				systray.SetTooltip("STT-Go: Idle")
 			case stateListening:
 				systray.SetIcon(iconListen)

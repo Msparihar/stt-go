@@ -242,6 +242,14 @@ func (s *sttService) onRelease() {
 						return transcribeGroq(ctx, s.apiKey, pcm, s.log)
 					})
 				text, transcribeErr = res.text, res.err
+			case "whisper_local":
+				cfg := defaultRetryConfig()
+				cfg.onRetry = func() { closeIdleConns(whisperLocalHTTPClient) }
+				res := withRetry(context.Background(), cfg, "whisper_local", s.log,
+					func(ctx context.Context) (string, error) {
+						return transcribeWhisperLocal(ctx, pcm, s.log)
+					})
+				text, transcribeErr = res.text, res.err
 			case "deepgram", "elevenlabs":
 				text, usedBackend, transcribeErr = s.raceTranscribe(pcm, duration)
 			}
