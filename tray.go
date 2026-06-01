@@ -128,7 +128,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		mInfo := systray.AddMenuItem(fmt.Sprintf("STT-Go (%s)", backendLabel), "")
 		mInfo.Disable()
 
-		// Live status of the local Whisper sidecar (D:\whisper-local\server.py).
+		// Live status of the local Whisper sidecar (sidecar/server.py on 127.0.0.1:5111).
 		// Polled in the background so the user can see at a glance whether the
 		// GPU model is reachable without having to dictate and watch it fail.
 		mLocalStatus := systray.AddMenuItem("Local model: checking…", "Local Whisper GPU sidecar (127.0.0.1:5111)")

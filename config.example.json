@@ -19,6 +19,10 @@
   "api_keys": {
     "deepgram": "",
     "openai": "",
-    "elevenlabs": ""
-  }
+    "elevenlabs": "",
+    "groq": ""
+  },
+  "local_whisper_url": "http://127.0.0.1:5111/transcribe",
+  "local_whisper_python": "",
+  "local_whisper_script": ""
 }

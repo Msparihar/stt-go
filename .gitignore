@@ -21,6 +21,12 @@ mismatches.jsonl
 debug-audio/
 failed-audio/
 
+# Local Whisper sidecar (venv, model cache, runtime log — never commit)
+sidecar/.venv/
+sidecar/models/
+sidecar/server.out.log
+sidecar/__pycache__/
+
 # Environment files (NEVER commit — secrets)
 .env
 .env.*
