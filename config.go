@@ -22,6 +22,9 @@ type Config struct {
 	StreamingMode  bool              `json:"streaming_mode"`
 	RealtimeModel  string            `json:"realtime_model,omitempty"` // default "gpt-4o-mini-transcribe"
 	GroqModel      string            `json:"groq_model,omitempty"`     // default "whisper-large-v3"
+	LocalWhisperURL    string        `json:"local_whisper_url,omitempty"`    // default http://127.0.0.1:5111/transcribe
+	LocalWhisperPython string        `json:"local_whisper_python,omitempty"` // default D:\whisper-local\.venv\Scripts\pythonw.exe
+	LocalWhisperScript string        `json:"local_whisper_script,omitempty"` // default D:\whisper-local\server.py
 	APIKeys        struct {
 		Deepgram   string `json:"deepgram"`
 		OpenAI     string `json:"openai"`
@@ -178,6 +181,7 @@ func runSetup(log *slog.Logger) {
 	fmt.Println("  4. api              — OpenAI Whisper REST (offline-friendly, slower)")
 	fmt.Println("  5. whisper_stream   — OpenAI gpt-4o-mini-transcribe with SSE streaming")
 	fmt.Println("  6. whisper_realtime — OpenAI Realtime API via WebSocket")
+	fmt.Println("  7. whisper_local    — Local faster-whisper on GPU (offline, free)")
 	fmt.Println()
 	backendInput := readLine("Default backend [deepgram]: ")
 	switch backendInput {
@@ -191,6 +195,8 @@ func runSetup(log *slog.Logger) {
 		cfg.DefaultBackend = "whisper_stream"
 	case "whisper_realtime", "realtime", "rt", "6":
 		cfg.DefaultBackend = "whisper_realtime"
+	case "whisper_local", "local", "7":
+		cfg.DefaultBackend = "whisper_local"
 	default:
 		cfg.DefaultBackend = "deepgram"
 	}

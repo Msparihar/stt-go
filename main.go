@@ -170,7 +170,7 @@ func readEnvKey(name string) string {
 
 func main() {
 	setup := flag.Bool("setup", false, "Run interactive setup wizard")
-	backendFlag := flag.String("backend", "", "Transcription backend: api, deepgram, elevenlabs, elevenlabs_batch, whisper_stream, whisper_realtime (overrides config)")
+	backendFlag := flag.String("backend", "", "Transcription backend: api, deepgram, elevenlabs, elevenlabs_batch, whisper_stream, whisper_realtime, whisper_local (overrides config)")
 	lang := flag.String("language", "", "Language code (overrides config)")
 	noTray := flag.Bool("no-tray", false, "Disable system tray icon")
 	flag.Parse()

@@ -57,4 +57,5 @@ var (
 	whisperStreamHTTPClient  = newSTTHTTPClient()
 	elevenLabsRESTHTTPClient = newSTTHTTPClient()
 	groqHTTPClient           = newSTTHTTPClient()
+	whisperLocalHTTPClient   = newSTTHTTPClient()
 )
