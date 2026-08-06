@@ -143,6 +143,7 @@ func main() {
 	// Load config (must happen before readEnvKey or vocabulary init)
 	appConfig = loadConfig(log)
 	initVocabulary()
+	platformStartupChecks(log)
 
 	// Handle --setup flag
 	if *setup {
