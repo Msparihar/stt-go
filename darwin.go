@@ -3,8 +3,60 @@
 package main
 
 /*
-#cgo LDFLAGS: -framework ApplicationServices -framework CoreFoundation
+#cgo LDFLAGS: -framework ApplicationServices -framework CoreFoundation -framework IOKit
 #include <ApplicationServices/ApplicationServices.h>
+#include <IOKit/hidsystem/IOHIDLib.h>
+
+// Input Monitoring: 0 = granted, 1 = denied, 2 = not yet asked
+static int sttInputMonitoringStatus() {
+	return (int)IOHIDCheckAccess(kIOHIDRequestTypeListenEvent);
+}
+
+// Pops the system prompt and adds this app to the Input Monitoring list.
+static int sttRequestInputMonitoring() {
+	return IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) ? 1 : 0;
+}
+
+static int sttAccessibilityTrusted() {
+	return AXIsProcessTrusted() ? 1 : 0;
+}
+
+// ── Hotkey event tap ────────────────────────────────────────────────
+// CGEventSourceKeyState is unreliable here: Karabiner re-posts right Option
+// with a different keycode in the state table. A flagsChanged event tap sees
+// the true keycode (61), so we track key state from the event stream instead.
+
+extern void goHotkeyFlags(long long keycode, unsigned long long flags);
+
+static CGEventRef sttHotkeyTapCB(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) {
+	if (type == kCGEventFlagsChanged) {
+		goHotkeyFlags(
+			CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode),
+			(unsigned long long)CGEventGetFlags(event));
+	} else if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+		CGEventTapEnable((CFMachPortRef)info, true);
+	}
+	return event;
+}
+
+static CFMachPortRef sttTap = NULL;
+
+// Creates the listen-only tap on the calling thread's run loop.
+// Returns 1 on success, 0 if the tap was refused (Input Monitoring missing).
+static int sttStartHotkeyTap() {
+	sttTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
+		kCGEventTapOptionListenOnly, CGEventMaskBit(kCGEventFlagsChanged),
+		sttHotkeyTapCB, NULL);
+	if (!sttTap) return 0;
+	CFRunLoopSourceRef src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, sttTap, 0);
+	CFRunLoopAddSource(CFRunLoopGetCurrent(), src, kCFRunLoopCommonModes);
+	CGEventTapEnable(sttTap, true);
+	return 1;
+}
+
+static void sttRunHotkeyLoop() {
+	CFRunLoopRun();
+}
 
 // kVK_RightOption = 0x3D (61)
 static int sttHotkeyDown() {
@@ -38,16 +90,84 @@ import "C"
 
 import (
 	"log/slog"
+	"runtime"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 	"unsafe"
 )
+
+// rightOptionHeld is fed by the flagsChanged event tap.
+var rightOptionHeld atomic.Bool
+
+// tapRunning reports whether the event tap started; if not, hotkeyDown falls
+// back to CGEventSourceKeyState polling.
+var tapRunning atomic.Bool
+
+const (
+	kVKRightOption = 61
+	maskAlternate  = 0x00080000 // kCGEventFlagMaskAlternate
+)
+
+//export goHotkeyFlags
+func goHotkeyFlags(keycode C.longlong, flags C.ulonglong) {
+	if keycode == kVKRightOption {
+		rightOptionHeld.Store(uint64(flags)&maskAlternate != 0)
+	}
+}
+
+// startHotkeyTap runs the event tap on a dedicated OS thread.
+func startHotkeyTap(log *slog.Logger) {
+	ready := make(chan bool, 1)
+	go func() {
+		runtime.LockOSThread()
+		ok := C.sttStartHotkeyTap() == 1
+		ready <- ok
+		if ok {
+			C.sttRunHotkeyLoop() // never returns
+		}
+	}()
+	if <-ready {
+		tapRunning.Store(true)
+		log.Info("[PERM] hotkey event tap active (Right Option, keycode 61)")
+	} else {
+		log.Error("[PERM] hotkey event tap REFUSED — falling back to key-state polling. Grant Input Monitoring and restart.")
+	}
+}
+
+// ── Startup permission checks ──────────────────────────────────────
+
+// platformStartupChecks logs macOS permission status and requests Input
+// Monitoring if it was never asked. Both permissions attach to the app that
+// launched the binary (e.g. the terminal), not the binary itself.
+func platformStartupChecks(log *slog.Logger) {
+	switch C.sttInputMonitoringStatus() {
+	case 0:
+		log.Info("[PERM] Input Monitoring: granted — hotkey will work")
+	case 1:
+		log.Error("[PERM] Input Monitoring: DENIED — hotkey will NOT work. Enable your terminal in System Settings → Privacy & Security → Input Monitoring, then relaunch the terminal.")
+	default:
+		log.Warn("[PERM] Input Monitoring: not determined — requesting now (watch for a system prompt)")
+		C.sttRequestInputMonitoring()
+	}
+
+	if C.sttAccessibilityTrusted() == 1 {
+		log.Info("[PERM] Accessibility: granted — typing will work")
+	} else {
+		log.Error("[PERM] Accessibility: NOT granted — transcribed text cannot be typed. Enable your terminal in System Settings → Privacy & Security → Accessibility.")
+	}
+
+	startHotkeyTap(log)
+}
 
 // ── Hotkey + foreground window ─────────────────────────────────────
 
 // hotkeyDown reports whether the push-to-talk key (Right Option) is held.
 // Needs the Input Monitoring permission on macOS 10.15+.
 func hotkeyDown() bool {
+	if tapRunning.Load() {
+		return rightOptionHeld.Load()
+	}
 	return C.sttHotkeyDown() != 0
 }
 

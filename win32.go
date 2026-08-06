@@ -67,6 +67,9 @@ var (
 	pD2D1CreateFactory  = d2d1.NewProc("D2D1CreateFactory")
 )
 
+// platformStartupChecks is a no-op on Windows — no TCC-style permissions.
+func platformStartupChecks(_ *slog.Logger) {}
+
 // ── Hotkey + foreground window ─────────────────────────────────────
 
 // hotkeyDown reports whether the push-to-talk key (Right Alt) is held.
