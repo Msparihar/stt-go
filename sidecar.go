@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 import (
@@ -9,23 +7,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
-	"syscall"
 	"time"
 )
 
 // localWhisperPython resolves the Python interpreter for the sidecar.
-// Priority: config.json local_whisper_python → <exeDir>/sidecar/.venv/Scripts/pythonw.exe → "pythonw" on PATH.
+// Priority: config.json local_whisper_python → <exeDir>/sidecar/.venv (platform layout) → default on PATH.
 func localWhisperPython() string {
 	if appConfig != nil && appConfig.LocalWhisperPython != "" {
 		return appConfig.LocalWhisperPython
 	}
 	exe, _ := os.Executable()
-	candidate := filepath.Join(filepath.Dir(exe), "sidecar", ".venv", "Scripts", "pythonw.exe")
+	candidate := filepath.Join(filepath.Dir(exe), "sidecar", ".venv", venvBinDir, venvPython)
 	if _, err := os.Stat(candidate); err == nil {
 		return candidate
 	}
-	return "pythonw"
+	return defaultPython
 }
 
 // localWhisperScript resolves the sidecar script path.
@@ -54,30 +50,6 @@ func localWhisperPort() string {
 	return "5111"
 }
 
-// freeLocalWhisperPort kills whatever currently owns the sidecar port plus any
-// stale server.py instance, so a single fresh sidecar can own the port. This is
-// what eliminates the old race between the app and the separate scheduled task.
-func freeLocalWhisperPort(port string, log *slog.Logger) {
-	// Match the resolved script path (both slash styles) so the stale-process
-	// sweep works whether the script lives in sidecar/ or a config-set path.
-	script := localWhisperScript()
-	esc := func(s string) string { return strings.ReplaceAll(s, "'", "''") }
-	back := esc(strings.ReplaceAll(script, "/", `\`))
-	fwd := esc(strings.ReplaceAll(script, `\`, "/"))
-	ps := `$p=` + port + `;` +
-		`Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue |` +
-		` ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue };` +
-		`Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |` +
-		` Where-Object { $_.CommandLine -like '*` + back + `*' -or $_.CommandLine -like '*` + fwd + `*' } |` +
-		` ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := cmd.Run(); err != nil {
-		log.Warn("[LOCAL] port cleanup returned error (continuing)", "port", port, "err", err)
-	}
-	time.Sleep(400 * time.Millisecond)
-}
-
 // spawnLocalWhisperSidecar launches server.py detached, with stdout/stderr
 // redirected to server.out.log in the same directory as the script.
 func spawnLocalWhisperSidecar(port string, log *slog.Logger) error {
@@ -85,7 +57,7 @@ func spawnLocalWhisperSidecar(port string, log *slog.Logger) error {
 	cmd := exec.Command(python, script)
 	cmd.Dir = filepath.Dir(script)
 	cmd.Env = append(os.Environ(), "WHISPER_PORT="+port)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	cmd.SysProcAttr = sidecarProcAttr()
 
 	logPath := filepath.Join(filepath.Dir(script), "server.out.log")
 	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); err == nil {

@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 import (
@@ -11,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/gorilla/websocket"
 )
@@ -284,51 +281,6 @@ func (t *rtTyper) correct(authoritative string) {
 	}
 
 	t.typed = authoritative
-}
-
-// sendBackspaces sends n backspace key events to the target window.
-func sendBackspaces(n int, targetHwnd uintptr, log *slog.Logger) {
-	if n <= 0 {
-		return
-	}
-	const vkBack = 0x08
-	inputs := make([]kbInput, 0, n*2)
-	for i := 0; i < n; i++ {
-		inputs = append(inputs,
-			kbInput{typ: inputKbd, vk: vkBack, flags: 0},
-			kbInput{typ: inputKbd, vk: vkBack, flags: kfKeyup},
-		)
-	}
-	if targetHwnd != 0 {
-		pSetForegroundWindow.Call(targetHwnd)
-	}
-	ret, _, _ := pSendInput.Call(uintptr(len(inputs)), uintptr(unsafe.Pointer(&inputs[0])), unsafe.Sizeof(inputs[0]))
-	if ret == 0 {
-		log.Error("[RT-WS] sendBackspaces: SendInput failed", "n", n)
-	}
-}
-
-// typeRunes sends unicode key events for a slice of runes. Reuses the same
-// pattern as typeText in whisper.go but without the RightAlt-release wait
-// (we're mid-recording, the key is still held).
-func typeRunes(runes []rune, targetHwnd uintptr, log *slog.Logger) {
-	if len(runes) == 0 {
-		return
-	}
-	inputs := make([]kbInput, 0, len(runes)*2)
-	for _, ch := range runes {
-		inputs = append(inputs,
-			kbInput{typ: inputKbd, scan: uint16(ch), flags: kfUnicode},
-			kbInput{typ: inputKbd, scan: uint16(ch), flags: kfUnicode | kfKeyup},
-		)
-	}
-	if targetHwnd != 0 {
-		pSetForegroundWindow.Call(targetHwnd)
-	}
-	ret, _, _ := pSendInput.Call(uintptr(len(inputs)), uintptr(unsafe.Pointer(&inputs[0])), unsafe.Sizeof(inputs[0]))
-	if ret == 0 {
-		log.Error("[RT-WS] typeRunes: SendInput failed", "runes", len(runes))
-	}
 }
 
 // ── sttService integration helpers ────────────────────────────────

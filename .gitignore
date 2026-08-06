@@ -37,3 +37,8 @@ sidecar/__pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+stt-go
+stt-go.log*
+config.json
+debug-audio/
+failed-audio/

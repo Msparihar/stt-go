@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 import (
@@ -202,8 +200,7 @@ func (s *sttService) run(ctx context.Context) {
 			s.log.Info("[SVC] STT Service stopped")
 			return
 		case <-tick.C:
-			st, _, _ := pGetAsyncKey.Call(vkRMenu)
-			down := int16(st) < 0
+			down := hotkeyDown()
 			if down && !pressed {
 				pressed = true
 				s.onPress()

@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 import (
@@ -14,87 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unsafe"
 )
-
-// ── Text typer (SendInput + KEYEVENTF_UNICODE) ────────────────────
-
-type kbInput struct {
-	typ       uint32
-	_p0       uint32
-	vk        uint16
-	scan      uint16
-	flags     uint32
-	time      uint32
-	_p1       uint32
-	extraInfo uintptr
-	_p2       uint64
-}
-
-// waitForRightAltRelease polls until Right Alt (VK_RMENU) is released.
-// This prevents SendInput from being eaten by the OS when the hotkey
-// modifier is still physically held.
-func waitForRightAltRelease() {
-	for {
-		st, _, _ := pGetAsyncKey.Call(vkRMenu)
-		if int16(st) >= 0 {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
-// typeText types the given text into the foreground window using SendInput
-// with KEYEVENTF_UNICODE. It saves and restores the target window, waits
-// for modifier keys to be released, and checks SendInput return values.
-func typeText(text string, targetHwnd uintptr, log *slog.Logger) {
-	if len(text) > 80 {
-		log.Info("[TYPE] typeText: will type", "chars", len(text), "text", text[:80]+"...")
-	} else {
-		log.Info("[TYPE] typeText: will type", "chars", len(text), "text", text)
-	}
-
-	// Wait for Right Alt to be released so SendInput isn't swallowed
-	log.Info("[TYPE] typeText: waiting for RightAlt release")
-	waitStart := time.Now()
-	waitForRightAltRelease()
-	log.Info("[TYPE] typeText: RightAlt released", "waitDuration", time.Since(waitStart).Round(time.Millisecond))
-
-	// Restore the window that was focused when recording started
-	if targetHwnd != 0 {
-		currentHwnd, _, _ := pGetForegroundWindow.Call()
-		if currentHwnd != targetHwnd {
-			log.Info("[TYPE] typeText: calling SetForegroundWindow", "target", fmt.Sprintf("0x%X", targetHwnd), "current", fmt.Sprintf("0x%X", currentHwnd))
-			pSetForegroundWindow.Call(targetHwnd)
-			time.Sleep(50 * time.Millisecond) // let window activate
-		}
-	}
-
-	// Pre-type delay to let focus settle
-	const preTypeDelay = 150 * time.Millisecond
-	log.Info("[TYPE] typeText: pre-type delay", "delay", preTypeDelay)
-	time.Sleep(preTypeDelay)
-
-	runes := []rune(text)
-	inputs := make([]kbInput, 0, 2*len(runes))
-	for _, ch := range runes {
-		inputs = append(inputs,
-			kbInput{typ: inputKbd, scan: uint16(ch), flags: kfUnicode},
-			kbInput{typ: inputKbd, scan: uint16(ch), flags: kfUnicode | kfKeyup},
-		)
-	}
-
-	if len(inputs) == 0 {
-		return
-	}
-
-	ret, _, _ := pSendInput.Call(uintptr(len(inputs)), uintptr(unsafe.Pointer(&inputs[0])), unsafe.Sizeof(inputs[0]))
-	if ret == 0 {
-		log.Error("[TYPE] typeText: SendInput failed", "chars", len(runes))
-	} else {
-		log.Info("[TYPE] typeText: completed successfully", "chars", len(runes))
-	}
-}
 
 // ── WAV encoding ───────────────────────────────────────────────────
 

@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 import (
@@ -14,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/sys/windows"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -42,15 +39,6 @@ const (
 	bufDurationMs = 100
 	bufSize       = sampleRate * blockAlign * bufDurationMs / 1000
 	numBufs       = 4
-
-	vkRMenu    = 0xA5
-	waveMapper = 0xFFFFFFFF
-	wavFmtPCM  = 1
-	cbEvent    = 0x00050000
-	whdrDone   = 0x00000001
-	inputKbd   = 1
-	kfUnicode  = 0x0004
-	kfKeyup    = 0x0002
 )
 
 // ── App-level config (loaded at startup) ──────────────────────────
@@ -75,49 +63,6 @@ func initVocabulary() {
 		"setx, hooks, worktree",
 	}, ", ")
 }
-
-// ── Windows DLL procs ──────────────────────────────────────────────
-
-var (
-	user32           = windows.NewLazyDLL("user32.dll")
-	winmm            = windows.NewLazyDLL("winmm.dll")
-	d2d1             = windows.NewLazyDLL("d2d1.dll")
-	gdi32            = windows.NewLazyDLL("gdi32.dll")
-
-	pGetAsyncKey         = user32.NewProc("GetAsyncKeyState")
-	pSendInput           = user32.NewProc("SendInput")
-	pGetForegroundWindow = user32.NewProc("GetForegroundWindow")
-	pSetForegroundWindow = user32.NewProc("SetForegroundWindow")
-	pRegisterClassExW    = user32.NewProc("RegisterClassExW")
-	pCreateWindowExW     = user32.NewProc("CreateWindowExW")
-	pShowWindow          = user32.NewProc("ShowWindow")
-	pDefWindowProcW      = user32.NewProc("DefWindowProcW")
-	pGetMessageW         = user32.NewProc("GetMessageW")
-	pTranslateMessage    = user32.NewProc("TranslateMessage")
-	pDispatchMessageW    = user32.NewProc("DispatchMessageW")
-	pPostMessageW        = user32.NewProc("PostMessageW")
-	pSetLayeredWndAttr   = user32.NewProc("SetLayeredWindowAttributes")
-	pSystemParamInfo     = user32.NewProc("SystemParametersInfoW")
-	pInvalidateRect      = user32.NewProc("InvalidateRect")
-	pBeginPaint          = user32.NewProc("BeginPaint")
-	pEndPaint            = user32.NewProc("EndPaint")
-	pSetWindowRgn        = user32.NewProc("SetWindowRgn")
-
-	pWaveInOpen        = winmm.NewProc("waveInOpen")
-	pWaveInClose       = winmm.NewProc("waveInClose")
-	pWaveInPrepHdr     = winmm.NewProc("waveInPrepareHeader")
-	pWaveInUnprepHdr   = winmm.NewProc("waveInUnprepareHeader")
-	pWaveInAddBuf      = winmm.NewProc("waveInAddBuffer")
-	pWaveInStart       = winmm.NewProc("waveInStart")
-	pWaveInStop        = winmm.NewProc("waveInStop")
-	pWaveInReset       = winmm.NewProc("waveInReset")
-	pWaveInGetNumDevs  = winmm.NewProc("waveInGetNumDevs")
-	pWaveInGetDevCapsW = winmm.NewProc("waveInGetDevCapsW")
-
-	pMoveWindow         = user32.NewProc("MoveWindow")
-	pCreateRoundRectRgn = gdi32.NewProc("CreateRoundRectRgn")
-	pD2D1CreateFactory  = d2d1.NewProc("D2D1CreateFactory")
-)
 
 // ── Env reader ─────────────────────────────────────────────────────
 
