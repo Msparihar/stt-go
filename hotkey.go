@@ -1,5 +1,3 @@
-//go:build windows
-
 package main
 
 import (
@@ -12,7 +10,7 @@ import (
 func (s *sttService) onPress() {
 	// Save the foreground window before recording starts so we can
 	// restore it before typing (overlay or other windows may steal focus)
-	hwnd, _, _ := pGetForegroundWindow.Call()
+	hwnd := captureForegroundWindow()
 	s.targetHwnd = hwnd
 	s.log.Info("[KEY] onPress: captured foreground window", "hwnd", fmt.Sprintf("0x%X", hwnd))
 

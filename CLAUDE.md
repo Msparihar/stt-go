@@ -2,11 +2,20 @@
 
 ## What is this?
 
-Windows desktop speech-to-text app. Hold Right Alt → record → release → transcribes and auto-types into the active window. System tray app with Direct2D waveform overlay.
+Desktop speech-to-text app for Windows and macOS. Hold Right Alt (Windows) / Right Option (macOS) → record → release → transcribes and auto-types into the active window. System tray app; Direct2D waveform overlay on Windows (no overlay on macOS yet).
 
 ## Architecture
 
-Single Go binary, 13 source files, no CGo. Uses Win32 APIs directly (waveIn, SendInput, Direct2D).
+Single Go binary. Shared files have no build tag; platform code lives behind small shims:
+
+- `win32.go` — all Win32 procs/consts, `hotkeyDown`, `typeText`/`typeRunes`/`sendBackspaces` (SendInput), `captureForegroundWindow`
+- `darwin.go` — same shim set via cgo CGEvent (`CGEventSourceKeyState` polling, unicode keyboard events). Needs Input Monitoring + Accessibility permissions.
+- `recorder.go` (windows, waveIn) / `recorder_darwin.go` (malgo/miniaudio, cgo)
+- `overlay.go` (windows, Direct2D) / `overlay_darwin.go` (no-op)
+- `clipboard.go` (windows Ctrl+Shift+V helper) / `clipboard_darwin.go` (no-op)
+- `sidecar_windows.go` / `sidecar_darwin.go` — python path, port cleanup, proc attrs
+
+macOS build: plain `go build .` (cgo, needs Xcode CLT). Windows: cross-compiles from mac with `GOOS=windows go build` — keep both green.
 
 | File | Purpose |
 |------|---------|
@@ -158,7 +167,7 @@ Wait for the latest run to be `completed success` before declaring anything ship
 
 ## Rules for Contributors
 
-1. Build tag `//go:build windows` on every `.go` file
-2. No CGo — use `syscall`/`windows` package for Win32 APIs
-3. Test builds: `go build -ldflags '-H windowsgui'` — must compile clean
+1. Shared code carries no build tag; Windows-only files use `//go:build windows`, macOS-only `//go:build darwin`
+2. No CGo in Windows code — use `syscall`/`windows` package for Win32 APIs. cgo is allowed in darwin files only.
+3. Test builds: `go build .` (mac) AND `GOOS=windows go build -ldflags '-H windowsgui'` — both must compile clean
 4. Keep it simple — this is a single-purpose productivity tool
