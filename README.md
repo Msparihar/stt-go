@@ -10,7 +10,7 @@
 [![CI](https://github.com/Msparihar/stt-go/actions/workflows/ci.yml/badge.svg)](https://github.com/Msparihar/stt-go/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Msparihar/stt-go)](https://github.com/Msparihar/stt-go/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D4)](#)
+[![Platform: Windows | macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0078D4)](#)
 
 </div>
 
@@ -23,13 +23,14 @@ Most dictation tools are either locked to one vendor, slow because they wait for
 ## Features
 
 - **7 transcription backends.** OpenAI Whisper (REST), Whisper streaming (SSE), Whisper Realtime (WebSocket), Deepgram Nova-3, ElevenLabs Scribe (streaming + batch), Groq Whisper, and **Local Whisper (GPU, offline)**. Pick one or let race mode decide.
-- **Push-to-talk dictation.** Hold **Right-Alt**, speak, release. The transcript types itself into the focused window — works in your editor, browser, terminal, Slack, anywhere.
+- **Push-to-talk dictation.** Hold **Right-Alt** (Windows) or **Right-Option** (macOS), speak, release. The transcript types itself into the focused window — works in your editor, browser, terminal, Slack, anywhere.
 - **System tray with live backend switching.** Right-click the tray icon to swap backends, change microphone, toggle real-time streaming, or quit — no restart needed.
 - **Clipboard image passthrough.** Press **Ctrl+Shift+V** and STT-Go grabs the clipboard image (or file), saves it under `~/Pictures/clipboard/clipboard_<timestamp>.png`, and types the full path into the focused window. Handy for pasting screenshots into agents that only accept file paths.
 - **Keyterm hinting.** Boost recognition of technical vocabulary (product names, framework names, CLI tools) via a configurable keyterms list — used as Deepgram keyterms and as the Whisper prompt.
 - **Regex-style replacements.** Map common mistranscriptions (`"11 labs"` → `"ElevenLabs"`, `"high key"` → `"Haiku"`) via a simple `from → to` dictionary.
 - **Race mode.** Runs a streaming backend and a REST backend in parallel; whichever returns a clean transcript first wins. Streaming gets a 2-second head start before REST competes.
-- **Local-only audio.** Audio is captured via Win32 `waveIn` (16 kHz / 16-bit / mono), buffered in memory, and sent only to the backend you configured. Nothing is logged or uploaded anywhere else.
+- **Local-only audio.** Audio is captured natively (Win32 `waveIn` on Windows, miniaudio on macOS; 16 kHz / 16-bit / mono), buffered in memory, and sent only to the backend you configured. Nothing is logged or uploaded anywhere else.
+- **Windows and macOS.** Same binary layout on both. On Apple Silicon the local model runs on the GPU via [MLX](https://github.com/ml-explore/mlx) — ~220 ms per dictation on an M-series chip, no API key.
 
 ## Install
 
@@ -54,6 +55,25 @@ go build -ldflags "-H windowsgui" -o stt-go.exe .
 ```
 
 Requires Go 1.21+ and Windows. The `-H windowsgui` flag suppresses the console window.
+
+### macOS (Apple Silicon)
+
+Download `stt-go-darwin-arm64` from [Releases](https://github.com/Msparihar/stt-go/releases), or build from source (needs Go 1.21+ and Xcode command line tools):
+
+```bash
+git clone https://github.com/Msparihar/stt-go.git
+cd stt-go
+go build -o stt-go .
+./stt-go
+```
+
+Grant three permissions to the app you launch it from (your terminal, until you wrap it in an app bundle), all under **System Settings → Privacy & Security**:
+
+1. **Input Monitoring** — to see the Right-Option hotkey
+2. **Accessibility** — to type the transcript into the focused app
+3. **Microphone** — macOS prompts on the first recording
+
+Relaunch the terminal after granting. The hotkey is **Right-Option**; recording state shows in the menu bar (🔴 recording, ✍️ typing). The waveform overlay and Ctrl+Shift+V clipboard helper are Windows-only for now.
 
 ## Get an API key
 
@@ -120,23 +140,31 @@ The 2-second `raceStreamingDeadline` is what makes the common case feel instant 
 
 ## Local Whisper (GPU, offline)
 
-STT-Go ships a Python sidecar (`sidecar/server.py`) that runs [faster-whisper](https://github.com/SYSTRAN/faster-whisper) locally on your GPU. No API key, no data leaving the machine, ~0.9 s per dictation on a 4 GB consumer GPU.
+STT-Go ships a Python sidecar (`sidecar/server.py`) that runs Whisper locally on your GPU — [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on NVIDIA/CUDA, [mlx-whisper](https://github.com/ml-explore/mlx-examples) on Apple Silicon (picked automatically). No API key, no data leaving the machine: ~0.9 s per dictation on a 4 GB consumer GPU, ~220 ms on an Apple M-series chip.
 
 **Requirements**
 
-- NVIDIA GPU with CUDA 12 runtime installed
-- ~2.4 GB VRAM while the model is loaded (`large-v3-turbo`; idle process uses ~240 MB)
+- NVIDIA GPU with CUDA 12 runtime, or any Apple Silicon Mac
+- ~2.4 GB VRAM / unified memory while the model is loaded (`large-v3-turbo`; idle process uses ~240 MB)
 - Python 3.10+
 
 **Setup**
 
 ```powershell
+# Windows
 cd sidecar
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 ```
 
-The first time STT-Go activates the `whisper_local` backend it downloads `large-v3-turbo` (~1.6 GB) from Hugging Face into `sidecar/models/`. Subsequent loads are instant.
+```bash
+# macOS
+cd sidecar
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+The first time STT-Go activates the `whisper_local` backend it downloads `large-v3-turbo` (~1.6 GB) from Hugging Face (into `sidecar/models/` on Windows, the shared `~/.cache/huggingface` on macOS). Subsequent loads are instant.
 
 **How it works**
 
@@ -153,7 +181,7 @@ When you select "Whisper Local (GPU)" from the tray, STT-Go:
 | Field | Default | Purpose |
 |---|---|---|
 | `local_whisper_url` | `http://127.0.0.1:5111/transcribe` | Sidecar endpoint |
-| `local_whisper_python` | `<exeDir>/sidecar/.venv/Scripts/pythonw.exe` | Python interpreter path |
+| `local_whisper_python` | `<exeDir>/sidecar/.venv/Scripts/pythonw.exe` (Windows) / `.venv/bin/python3` (macOS) | Python interpreter path |
 | `local_whisper_script` | `<exeDir>/sidecar/server.py` | Sidecar script path |
 
 Override `WHISPER_MODEL` (default `large-v3-turbo`) or `WHISPER_PORT` (default `5111`) via environment variables before the sidecar starts.

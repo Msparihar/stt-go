@@ -95,6 +95,8 @@ import (
 	"time"
 	"unicode/utf16"
 	"unsafe"
+
+	"github.com/energye/systray"
 )
 
 // rightOptionHeld is fed by the flagsChanged event tap.
@@ -174,6 +176,19 @@ func hotkeyDown() bool {
 // captureForegroundWindow is a no-op on macOS: synthetic keyboard events go
 // to whatever app is focused, so there is no window handle to save/restore.
 func captureForegroundWindow() uintptr { return 0 }
+
+// setTrayStateTitle shows the recording state as an emoji next to the menu
+// bar icon — the macOS stand-in for the Windows waveform overlay.
+func setTrayStateTitle(state trayState) {
+	switch state {
+	case stateListening:
+		systray.SetTitle("🔴")
+	case stateTranscribing:
+		systray.SetTitle("✍️")
+	default:
+		systray.SetTitle("")
+	}
+}
 
 // waitForRightAltRelease polls until Right Option is released so the held
 // modifier can't combine with the synthetic keystrokes.

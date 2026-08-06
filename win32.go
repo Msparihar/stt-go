@@ -70,6 +70,10 @@ var (
 // platformStartupChecks is a no-op on Windows — no TCC-style permissions.
 func platformStartupChecks(_ *slog.Logger) {}
 
+// setTrayStateTitle is a no-op on Windows — the colored tray icon already
+// shows the recording state.
+func setTrayStateTitle(_ trayState) {}
+
 // ── Hotkey + foreground window ─────────────────────────────────────
 
 // hotkeyDown reports whether the push-to-talk key (Right Alt) is held.
