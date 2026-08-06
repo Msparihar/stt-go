@@ -110,6 +110,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 
 	systray.Run(func() {
 		systray.SetIcon(iconIdle)
+		setTrayStateTitle(stateIdle)
 		systray.SetTooltip("STT-Go: Idle")
 
 		backendLabel := map[string]string{
@@ -342,12 +343,15 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			switch state {
 			case stateIdle:
 				systray.SetIcon(idleIcon())
+				setTrayStateTitle(stateIdle)
 				systray.SetTooltip("STT-Go: Idle")
 			case stateListening:
 				systray.SetIcon(iconListen)
+				setTrayStateTitle(stateListening)
 				systray.SetTooltip("STT-Go: Listening...")
 			case stateTranscribing:
 				systray.SetIcon(iconTranscribe)
+				setTrayStateTitle(stateTranscribing)
 				systray.SetTooltip("STT-Go: Transcribing...")
 			}
 		}
