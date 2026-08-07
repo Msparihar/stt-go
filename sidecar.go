@@ -16,8 +16,7 @@ func localWhisperPython() string {
 	if appConfig != nil && appConfig.LocalWhisperPython != "" {
 		return appConfig.LocalWhisperPython
 	}
-	exe, _ := os.Executable()
-	candidate := filepath.Join(filepath.Dir(exe), "sidecar", ".venv", venvBinDir, venvPython)
+	candidate := filepath.Join(appDataDir(), "sidecar", ".venv", venvBinDir, venvPython)
 	if _, err := os.Stat(candidate); err == nil {
 		return candidate
 	}
@@ -30,8 +29,7 @@ func localWhisperScript() string {
 	if appConfig != nil && appConfig.LocalWhisperScript != "" {
 		return appConfig.LocalWhisperScript
 	}
-	exe, _ := os.Executable()
-	return filepath.Join(filepath.Dir(exe), "sidecar", "server.py")
+	return filepath.Join(appDataDir(), "sidecar", "server.py")
 }
 
 // localWhisperPort extracts the port from the configured transcribe URL so the

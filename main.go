@@ -120,9 +120,8 @@ func main() {
 	noTray := flag.Bool("no-tray", false, "Disable system tray icon")
 	flag.Parse()
 
-	exe, _ := os.Executable()
 	logFile := &lumberjack.Logger{
-		Filename:   filepath.Join(filepath.Dir(exe), "stt-go.log"),
+		Filename:   filepath.Join(appDataDir(), "stt-go.log"),
 		MaxSize:    5, // MB — rotates when exceeded
 		MaxBackups: 3, // keep 3 old log files
 		MaxAge:     90, // days — delete older backups

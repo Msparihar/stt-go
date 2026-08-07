@@ -33,8 +33,7 @@ type Config struct {
 
 // configPath returns the path to config.json next to the exe.
 func configPath() string {
-	exe, _ := os.Executable()
-	return filepath.Join(filepath.Dir(exe), "config.json")
+	return filepath.Join(appDataDir(), "config.json")
 }
 
 // loadConfig loads config.json. If it doesn't exist, creates a default one and returns it.

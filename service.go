@@ -188,7 +188,7 @@ func (s *sttService) switchBackend(backend string) {
 }
 
 func (s *sttService) run(ctx context.Context) {
-	s.log.Info("[SVC] STT Service running — hold Right Alt to record, release to transcribe")
+	s.log.Info("[SVC] STT Service running — hold " + hotkeyName + " to record, release to transcribe")
 
 	pressed := false
 	tick := time.NewTicker(10 * time.Millisecond)

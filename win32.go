@@ -5,11 +5,21 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+const hotkeyName = "Right Alt"
+
+// appDataDir is where config, logs, and audio dumps live: next to the exe.
+func appDataDir() string {
+	exe, _ := os.Executable()
+	return filepath.Dir(exe)
+}
 
 // ── Win32-only constants ───────────────────────────────────────────
 
@@ -69,10 +79,6 @@ var (
 
 // platformStartupChecks is a no-op on Windows — no TCC-style permissions.
 func platformStartupChecks(_ *slog.Logger) {}
-
-// setTrayStateTitle is a no-op on Windows — the colored tray icon already
-// shows the recording state.
-func setTrayStateTitle(_ trayState) {}
 
 // ── Hotkey + foreground window ─────────────────────────────────────
 

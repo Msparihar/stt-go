@@ -13,8 +13,7 @@ import (
 // cleanupOldFiles removes debug audio files and mismatch entries older than 7 days.
 // Called once on startup.
 func cleanupOldFiles(log *slog.Logger) {
-	exe, _ := os.Executable()
-	baseDir := filepath.Dir(exe)
+	baseDir := appDataDir()
 	cutoff := time.Now().AddDate(0, 0, -7)
 
 	// Clean debug-audio/
@@ -94,8 +93,7 @@ func cleanupOldFiles(log *slog.Logger) {
 // saveAudioToDisk saves raw PCM audio as WAV to disk when all backends fail.
 // Returns the file path, or empty string on error.
 func saveAudioToDisk(pcm []byte, log *slog.Logger) string {
-	exe, _ := os.Executable()
-	dir := filepath.Join(filepath.Dir(exe), "failed-audio")
+	dir := filepath.Join(appDataDir(), "failed-audio")
 	os.MkdirAll(dir, 0755)
 
 	filename := fmt.Sprintf("stt-%s.wav", time.Now().Format("2006-01-02T15-04-05"))
@@ -113,8 +111,7 @@ func saveAudioToDisk(pcm []byte, log *slog.Logger) string {
 // saveDebugAudio saves every recording to debug-audio/ for diagnosis.
 // Returns just the filename (not full path) for compact logging.
 func saveDebugAudio(pcm []byte, log *slog.Logger) string {
-	exe, _ := os.Executable()
-	dir := filepath.Join(filepath.Dir(exe), "debug-audio")
+	dir := filepath.Join(appDataDir(), "debug-audio")
 	os.MkdirAll(dir, 0755)
 
 	filename := fmt.Sprintf("stt-%s.wav", time.Now().Format("2006-01-02T15-04-05.000"))
