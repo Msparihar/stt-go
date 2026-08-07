@@ -15,6 +15,14 @@ import (
 
 const hotkeyName = "Right Alt"
 
+// acquireSingleInstance creates a named mutex; a second copy sees
+// ERROR_ALREADY_EXISTS and refuses to start.
+func acquireSingleInstance() bool {
+	name, _ := windows.UTF16PtrFromString("Local\\stt-go-single-instance")
+	_, err := windows.CreateMutex(nil, false, name)
+	return err != windows.ERROR_ALREADY_EXISTS
+}
+
 // appDataDir is where config, logs, and audio dumps live: next to the exe.
 func appDataDir() string {
 	exe, _ := os.Executable()

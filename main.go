@@ -122,9 +122,9 @@ func main() {
 
 	logFile := &lumberjack.Logger{
 		Filename:   filepath.Join(appDataDir(), "stt-go.log"),
-		MaxSize:    5, // MB — rotates when exceeded
-		MaxBackups: 3, // keep 3 old log files
-		MaxAge:     90, // days — delete older backups
+		MaxSize:    5,    // MB — rotates when exceeded
+		MaxBackups: 3,    // keep 3 old log files
+		MaxAge:     90,   // days — delete older backups
 		Compress:   true, // gzip rotated files
 	}
 
@@ -138,6 +138,11 @@ func main() {
 
 	handler := slog.NewTextHandler(&resilientWriter{primary: os.Stdout, secondary: logFile}, &slog.HandlerOptions{Level: slog.LevelInfo})
 	log := slog.New(handler)
+
+	if !*setup && !acquireSingleInstance() {
+		log.Error("[SVC] Another STT-Go instance is already running — exiting")
+		return
+	}
 
 	// Load config (must happen before readEnvKey or vocabulary init)
 	appConfig = loadConfig(log)
