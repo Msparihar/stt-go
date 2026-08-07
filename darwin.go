@@ -105,6 +105,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode/utf16"
 	"unsafe"
@@ -183,6 +184,24 @@ func appDataDir() string {
 	dir := filepath.Join(home, "Library", "Application Support", "STT-Go")
 	_ = os.MkdirAll(dir, 0o755)
 	return dir
+}
+
+// instanceLock holds the single-instance file lock for the process lifetime.
+var instanceLock *os.File
+
+// acquireSingleInstance takes an exclusive lock on a file in the data dir.
+// Returns false if another STT-Go already holds it.
+func acquireSingleInstance() bool {
+	f, err := os.OpenFile(filepath.Join(appDataDir(), "stt-go.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return true // can't lock — don't block startup over it
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return false
+	}
+	instanceLock = f
+	return true
 }
 
 // ── Hotkey + foreground window ─────────────────────────────────────
