@@ -21,6 +21,17 @@ static int sttAccessibilityTrusted() {
 	return AXIsProcessTrusted() ? 1 : 0;
 }
 
+// Shows the system dialog pointing the user at Accessibility settings.
+static int sttAccessibilityPrompt() {
+	const void *keys[] = { kAXTrustedCheckOptionPrompt };
+	const void *values[] = { kCFBooleanTrue };
+	CFDictionaryRef opts = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 1,
+		&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	int trusted = AXIsProcessTrustedWithOptions(opts) ? 1 : 0;
+	CFRelease(opts);
+	return trusted;
+}
+
 // ── Hotkey event tap ────────────────────────────────────────────────
 // CGEventSourceKeyState is unreliable here: Karabiner re-posts right Option
 // with a different keycode in the state table. A flagsChanged event tap sees
@@ -90,13 +101,13 @@ import "C"
 
 import (
 	"log/slog"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync/atomic"
 	"time"
 	"unicode/utf16"
 	"unsafe"
-
-	"github.com/energye/systray"
 )
 
 // rightOptionHeld is fed by the flagsChanged event tap.
@@ -109,6 +120,8 @@ var tapRunning atomic.Bool
 const (
 	kVKRightOption = 61
 	maskAlternate  = 0x00080000 // kCGEventFlagMaskAlternate
+
+	hotkeyName = "Right Option"
 )
 
 //export goHotkeyFlags
@@ -156,10 +169,20 @@ func platformStartupChecks(log *slog.Logger) {
 	if C.sttAccessibilityTrusted() == 1 {
 		log.Info("[PERM] Accessibility: granted — typing will work")
 	} else {
-		log.Error("[PERM] Accessibility: NOT granted — transcribed text cannot be typed. Enable your terminal in System Settings → Privacy & Security → Accessibility.")
+		log.Error("[PERM] Accessibility: NOT granted — transcribed text cannot be typed. Requesting now (watch for a system dialog).")
+		C.sttAccessibilityPrompt()
 	}
 
 	startHotkeyTap(log)
+}
+
+// appDataDir is where config, logs, and audio dumps live:
+// ~/Library/Application Support/STT-Go.
+func appDataDir() string {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, "Library", "Application Support", "STT-Go")
+	_ = os.MkdirAll(dir, 0o755)
+	return dir
 }
 
 // ── Hotkey + foreground window ─────────────────────────────────────
@@ -176,19 +199,6 @@ func hotkeyDown() bool {
 // captureForegroundWindow is a no-op on macOS: synthetic keyboard events go
 // to whatever app is focused, so there is no window handle to save/restore.
 func captureForegroundWindow() uintptr { return 0 }
-
-// setTrayStateTitle shows the recording state as an emoji next to the menu
-// bar icon — the macOS stand-in for the Windows waveform overlay.
-func setTrayStateTitle(state trayState) {
-	switch state {
-	case stateListening:
-		systray.SetTitle("🔴")
-	case stateTranscribing:
-		systray.SetTitle("✍️")
-	default:
-		systray.SetTitle("")
-	}
-}
 
 // waitForRightAltRelease polls until Right Option is released so the held
 // modifier can't combine with the synthetic keystrokes.

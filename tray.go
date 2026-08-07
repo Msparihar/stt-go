@@ -110,8 +110,20 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 
 	systray.Run(func() {
 		systray.SetIcon(iconIdle)
-		setTrayStateTitle(stateIdle)
 		systray.SetTooltip("STT-Go: Idle")
+
+		// energye/systray does not pop the menu by itself on macOS —
+		// both clicks must call ShowMenu explicitly.
+		systray.SetOnClick(func(m systray.IMenu) {
+			if m != nil {
+				m.ShowMenu()
+			}
+		})
+		systray.SetOnRClick(func(m systray.IMenu) {
+			if m != nil {
+				m.ShowMenu()
+			}
+		})
 
 		backendLabel := map[string]string{
 			"deepgram":         "Deepgram Nova-3",
@@ -343,21 +355,22 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			switch state {
 			case stateIdle:
 				systray.SetIcon(idleIcon())
-				setTrayStateTitle(stateIdle)
 				systray.SetTooltip("STT-Go: Idle")
 			case stateListening:
 				systray.SetIcon(iconListen)
-				setTrayStateTitle(stateListening)
 				systray.SetTooltip("STT-Go: Listening...")
 			case stateTranscribing:
 				systray.SetIcon(iconTranscribe)
-				setTrayStateTitle(stateTranscribing)
 				systray.SetTooltip("STT-Go: Transcribing...")
 			}
 		}
 
-		svc.run(ctx)
-		systray.Quit()
+		// Run the hotkey loop off the UI thread — on macOS this callback runs
+		// on the main thread and blocking it freezes the menu.
+		go func() {
+			svc.run(ctx)
+			systray.Quit()
+		}()
 	}, func() {
 		log.Info("[SVC] STT-Go exiting")
 	})

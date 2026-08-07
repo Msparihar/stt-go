@@ -300,8 +300,7 @@ func (s *sttService) compareWithWhisper(pcm []byte, primaryText, primaryBackend,
 
 // appendMismatch appends a mismatch entry to mismatches.jsonl.
 func appendMismatch(entry mismatchEntry, log *slog.Logger) {
-	exe, _ := os.Executable()
-	path := filepath.Join(filepath.Dir(exe), "mismatches.jsonl")
+	path := filepath.Join(appDataDir(), "mismatches.jsonl")
 
 	data, err := json.Marshal(entry)
 	if err != nil {

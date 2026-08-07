@@ -1,0 +1,18 @@
+/Users/manish/dev/personal/stt-go/sidecar/.venv/lib/python3.14/site-packages/huggingface_hub/constants.py:298: FutureWarning: The `HF_HUB_ENABLE_HF_TRANSFER` environment variable is deprecated as 'hf_transfer' is not used anymore. Please use `HF_XET_HIGH_PERFORMANCE` instead to enable high performance transfer with Xet. Visit https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables#hfxethighperformance for more details.
+  warnings.warn(
+audio: ../debug-audio/stt-2026-08-07T00-36-14.317.wav (6.6s @ 16000Hz)
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files: 100%|██████████| 4/4 [02:10<00:00, 32.74s/it]Fetching 4 files: 100%|██████████| 4/4 [02:10<00:00, 32.74s/it]
+DONE mlx-community/whisper-large-v3-turbo: first=134.47s warm=0.210s (31.5x realtime)
+  text: Hey, so I'm trying to speak something. Are you able to listen to me?
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 4 files:  25%|██▌       | 1/4 [00:00<00:01,  1.72it/s]Fetching 4 files:  50%|█████     | 2/4 [00:00<00:00,  2.55it/s]Fetching 4 files: 100%|██████████| 4/4 [01:43<00:00, 32.34s/it]Fetching 4 files: 100%|██████████| 4/4 [01:43<00:00, 25.88s/it]
+DONE mlx-community/distil-whisper-large-v3: first=105.02s warm=0.196s (33.7x realtime)
+  text: Hey, so I'm trying to speak something. Are you able to listen to me?
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files:  25%|██▌       | 1/4 [00:00<00:00,  3.03it/s]Fetching 4 files: 100%|██████████| 4/4 [00:39<00:00, 10.53s/it]Fetching 4 files: 100%|██████████| 4/4 [00:39<00:00,  9.76s/it]
+DONE mlx-community/whisper-small-mlx: first=41.31s warm=0.097s (68.4x realtime)
+  text: Hey, so I'm trying to speak something. Are you able to listen to me?
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files:  25%|██▌       | 1/4 [00:00<00:01,  2.79it/s]Fetching 4 files: 100%|██████████| 4/4 [00:29<00:00,  7.97s/it]Fetching 4 files: 100%|██████████| 4/4 [00:29<00:00,  7.40s/it]
+DONE mlx-community/whisper-base-mlx: first=31.41s warm=0.038s (172.8x realtime)
+  text: Hey, so I'm trying to speak something. Are you able to listen to me?
+
+JSON:[{"model": "mlx-community/whisper-large-v3-turbo", "first_sec": 134.47, "warm_sec": 0.21, "rtf": 31.5, "text": "Hey, so I'm trying to speak something. Are you able to listen to me?"}, {"model": "mlx-community/distil-whisper-large-v3", "first_sec": 105.02, "warm_sec": 0.196, "rtf": 33.7, "text": "Hey, so I'm trying to speak something. Are you able to listen to me?"}, {"model": "mlx-community/whisper-small-mlx", "first_sec": 41.31, "warm_sec": 0.097, "rtf": 68.4, "text": "Hey, so I'm trying to speak something. Are you able to listen to me?"}, {"model": "mlx-community/whisper-base-mlx", "first_sec": 31.41, "warm_sec": 0.038, "rtf": 172.8, "text": "Hey, so I'm trying to speak something. Are you able to listen to me?"}]
