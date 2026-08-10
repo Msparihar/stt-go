@@ -33,15 +33,17 @@ static int sttAccessibilityPrompt() {
 }
 
 // ── Hotkey event tap ────────────────────────────────────────────────
-// CGEventSourceKeyState is unreliable here: Karabiner re-posts right Option
-// with a different keycode in the state table. A flagsChanged event tap sees
-// the true keycode (61), so we track key state from the event stream instead.
+// CGEventSourceKeyState is unreliable here: Karabiner re-posts modifier keys
+// with different keycodes in the state table. A flagsChanged event tap sees
+// the true keycode, so we track key state from the event stream instead.
 
-extern void goHotkeyFlags(long long keycode, unsigned long long flags);
+// evType: 1 = flagsChanged, 2 = keyDown, 3 = keyUp
+extern void goHotkeyFlags(int evType, long long keycode, unsigned long long flags);
 
 static CGEventRef sttHotkeyTapCB(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) {
-	if (type == kCGEventFlagsChanged) {
+	if (type == kCGEventFlagsChanged || type == kCGEventKeyDown || type == kCGEventKeyUp) {
 		goHotkeyFlags(
+			type == kCGEventFlagsChanged ? 1 : (type == kCGEventKeyDown ? 2 : 3),
 			CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode),
 			(unsigned long long)CGEventGetFlags(event));
 	} else if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
@@ -54,9 +56,13 @@ static CFMachPortRef sttTap = NULL;
 
 // Creates the listen-only tap on the calling thread's run loop.
 // Returns 1 on success, 0 if the tap was refused (Input Monitoring missing).
+// keyDown/keyUp are tapped alongside flagsChanged because synthetic modifier
+// presses (Logi Options+ button shortcuts) arrive as keyDown with keycode
+// 65535 and only the modifier flag set — no flagsChanged is posted.
 static int sttStartHotkeyTap() {
 	sttTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
-		kCGEventTapOptionListenOnly, CGEventMaskBit(kCGEventFlagsChanged),
+		kCGEventTapOptionListenOnly,
+		CGEventMaskBit(kCGEventFlagsChanged) | CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp),
 		sttHotkeyTapCB, NULL);
 	if (!sttTap) return 0;
 	CFRunLoopSourceRef src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, sttTap, 0);
@@ -69,9 +75,8 @@ static void sttRunHotkeyLoop() {
 	CFRunLoopRun();
 }
 
-// kVK_RightOption = 0x3D (61)
-static int sttHotkeyDown() {
-	return CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 61) ? 1 : 0;
+static int sttModifierDown(unsigned long long mask) {
+	return (CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState) & mask) ? 1 : 0;
 }
 
 // Types a UTF-16 string by attaching it to a synthetic keyboard event.
@@ -104,6 +109,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -111,25 +118,132 @@ import (
 	"unsafe"
 )
 
-// rightOptionHeld is fed by the flagsChanged event tap.
-var rightOptionHeld atomic.Bool
+// hotkeyHeld is fed by the event tap.
+var hotkeyHeld atomic.Bool
 
 // tapRunning reports whether the event tap started; if not, hotkeyDown falls
-// back to CGEventSourceKeyState polling.
+// back to CGEventSourceFlagsState polling.
 var tapRunning atomic.Bool
 
 const (
-	kVKRightOption = 61
-	maskAlternate  = 0x00080000 // kCGEventFlagMaskAlternate
+	maskShift     = 0x00020000 // kCGEventFlagMaskShift
+	maskControl   = 0x00040000 // kCGEventFlagMaskControl
+	maskAlternate = 0x00080000 // kCGEventFlagMaskAlternate
+	maskCommand   = 0x00100000 // kCGEventFlagMaskCommand
+	maskFn        = 0x00800000 // kCGEventFlagMaskSecondaryFn
+)
 
-	hotkeyName = "Right Option"
+// hotkeySpec describes a push-to-talk modifier. keycodes empty = side-agnostic:
+// state follows the flag bit on any event, which also catches synthetic
+// presses (keycode 65535) from Logi Options+ style button shortcuts.
+// Side-specific keys must match a real keycode on flagsChanged, so synthetic
+// events can't trigger them.
+type hotkeySpec struct {
+	mask     uint64
+	keycodes []int64
+	name     string
+}
+
+var hotkeySpecs = map[string]hotkeySpec{
+	"ctrl":         {maskControl, nil, "Ctrl"},
+	"left_ctrl":    {maskControl, []int64{59}, "Left Ctrl"},
+	"right_ctrl":   {maskControl, []int64{62}, "Right Ctrl"},
+	"option":       {maskAlternate, nil, "Option"},
+	"left_option":  {maskAlternate, []int64{58}, "Left Option"},
+	"right_option": {maskAlternate, []int64{61}, "Right Option"},
+	"cmd":          {maskCommand, nil, "Cmd"},
+	"left_cmd":     {maskCommand, []int64{55}, "Left Cmd"},
+	"right_cmd":    {maskCommand, []int64{54}, "Right Cmd"},
+	"shift":        {maskShift, nil, "Shift"},
+	"left_shift":   {maskShift, []int64{56}, "Left Shift"},
+	"right_shift":  {maskShift, []int64{60}, "Right Shift"},
+	"fn":           {maskFn, nil, "Fn"},
+}
+
+// Active hotkey, set by initHotkey from config before the tap starts.
+var (
+	hotkeyMask  uint64 = maskControl
+	hotkeyCodes []int64
+	hotkeyName  = "Ctrl"
+)
+
+// initHotkey resolves config.json's "hotkey" field (default "ctrl").
+func initHotkey(log *slog.Logger) {
+	key := "ctrl"
+	if appConfig != nil && appConfig.Hotkey != "" {
+		key = strings.ToLower(appConfig.Hotkey)
+	}
+	spec, ok := hotkeySpecs[key]
+	if !ok {
+		names := make([]string, 0, len(hotkeySpecs))
+		for n := range hotkeySpecs {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		log.Error("[CFG] unknown hotkey in config.json — falling back to ctrl",
+			"hotkey", key, "valid", strings.Join(names, ", "))
+		spec = hotkeySpecs["ctrl"]
+	}
+	hotkeyMask, hotkeyCodes, hotkeyName = spec.mask, spec.keycodes, spec.name
+	tapToggleOn = appConfig == nil || appConfig.TapToggle == nil || *appConfig.TapToggle
+	log.Info("[CFG] push-to-talk hotkey", "key", hotkeyName, "tap_toggle", tapToggleOn)
+}
+
+// toggleLatched flips on a bare tap of the hotkey (down→up under
+// tapToggleMaxHold with no other key pressed in between), so a gesture-button
+// click or a quick Ctrl tap toggles recording instead of needing a hold.
+// A tap while latched unlatches (stops the recording). Modifier+key combos
+// (Ctrl+C etc.) never count as taps.
+var toggleLatched atomic.Bool
+
+const tapToggleMaxHold = 350 * time.Millisecond
+
+// Tap-detection state. Only touched from the event-tap thread.
+var (
+	tapDownAt    time.Time
+	tapSawOther  bool
+	tapWasHeld   bool
+	tapToggleOn  bool // from config, set by initHotkey
 )
 
 //export goHotkeyFlags
-func goHotkeyFlags(keycode C.longlong, flags C.ulonglong) {
-	if keycode == kVKRightOption {
-		rightOptionHeld.Store(uint64(flags)&maskAlternate != 0)
+func goHotkeyFlags(evType C.int, keycode C.longlong, flags C.ulonglong) {
+	held := uint64(flags)&hotkeyMask != 0
+	if len(hotkeyCodes) > 0 {
+		// Side-specific key: only its own flagsChanged events change state.
+		if evType != 1 {
+			if evType == 2 {
+				tapSawOther = true
+			}
+			return
+		}
+		match := false
+		for _, kc := range hotkeyCodes {
+			if int64(keycode) == kc {
+				match = true
+				break
+			}
+		}
+		if !match {
+			return
+		}
+	} else if evType == 2 && int64(keycode) != 65535 && held {
+		// Real key pressed while the modifier is down: this is a combo, not a tap.
+		tapSawOther = true
 	}
+
+	if tapToggleOn {
+		if held && !tapWasHeld {
+			tapDownAt = time.Now()
+			tapSawOther = false
+		} else if !held && tapWasHeld {
+			if !tapSawOther && time.Since(tapDownAt) < tapToggleMaxHold {
+				toggleLatched.Store(!toggleLatched.Load())
+			}
+		}
+		tapWasHeld = held
+	}
+	hotkeyHeld.Store(held)
 }
 
 // startHotkeyTap runs the event tap on a dedicated OS thread.
@@ -145,7 +259,7 @@ func startHotkeyTap(log *slog.Logger) {
 	}()
 	if <-ready {
 		tapRunning.Store(true)
-		log.Info("[PERM] hotkey event tap active (Right Option, keycode 61)")
+		log.Info("[PERM] hotkey event tap active", "hotkey", hotkeyName)
 	} else {
 		log.Error("[PERM] hotkey event tap REFUSED — falling back to key-state polling. Grant Input Monitoring and restart.")
 	}
@@ -157,6 +271,7 @@ func startHotkeyTap(log *slog.Logger) {
 // Monitoring if it was never asked. Both permissions attach to the app that
 // launched the binary (e.g. the terminal), not the binary itself.
 func platformStartupChecks(log *slog.Logger) {
+	initHotkey(log)
 	switch C.sttInputMonitoringStatus() {
 	case 0:
 		log.Info("[PERM] Input Monitoring: granted — hotkey will work")
@@ -206,13 +321,13 @@ func acquireSingleInstance() bool {
 
 // ── Hotkey + foreground window ─────────────────────────────────────
 
-// hotkeyDown reports whether the push-to-talk key (Right Option) is held.
+// hotkeyDown reports whether the configured push-to-talk modifier is held.
 // Needs the Input Monitoring permission on macOS 10.15+.
 func hotkeyDown() bool {
 	if tapRunning.Load() {
-		return rightOptionHeld.Load()
+		return hotkeyHeld.Load() || toggleLatched.Load()
 	}
-	return C.sttHotkeyDown() != 0
+	return C.sttModifierDown(C.ulonglong(hotkeyMask)) != 0
 }
 
 // captureForegroundWindow is a no-op on macOS: synthetic keyboard events go
