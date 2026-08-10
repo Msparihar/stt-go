@@ -2,12 +2,31 @@
   "default_backend": "deepgram",
   "language": "en",
   "keyterms": [
-    "OpenAI", "Claude", "Anthropic", "GPT-4", "Whisper", "Deepgram",
-    "ElevenLabs", "Scribe",
-    "GitHub", "Docker", "Kubernetes", "Cloudflare", "Vercel",
-    "PostgreSQL", "Redis", "MongoDB",
-    "TypeScript", "JavaScript", "Golang", "React", "Next.js",
-    "GraphQL", "WebSocket", "FastAPI", "Express"
+    "OpenAI",
+    "Claude",
+    "Anthropic",
+    "GPT-4",
+    "Whisper",
+    "Deepgram",
+    "ElevenLabs",
+    "Scribe",
+    "GitHub",
+    "Docker",
+    "Kubernetes",
+    "Cloudflare",
+    "Vercel",
+    "PostgreSQL",
+    "Redis",
+    "MongoDB",
+    "TypeScript",
+    "JavaScript",
+    "Golang",
+    "React",
+    "Next.js",
+    "GraphQL",
+    "WebSocket",
+    "FastAPI",
+    "Express"
   ],
   "replacements": {
     "high key": "Haiku",
@@ -24,5 +43,6 @@
   },
   "local_whisper_url": "http://127.0.0.1:5111/transcribe",
   "local_whisper_python": "",
-  "local_whisper_script": ""
+  "local_whisper_script": "",
+  "hotkey": "ctrl"
 }

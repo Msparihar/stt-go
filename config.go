@@ -23,6 +23,8 @@ type Config struct {
 	LocalWhisperURL    string        `json:"local_whisper_url,omitempty"`    // default http://127.0.0.1:5111/transcribe
 	LocalWhisperPython string        `json:"local_whisper_python,omitempty"` // default <exeDir>/sidecar/.venv/Scripts/pythonw.exe, then pythonw on PATH
 	LocalWhisperScript string        `json:"local_whisper_script,omitempty"` // default <exeDir>/sidecar/server.py
+	Hotkey             string        `json:"hotkey,omitempty"`               // macOS push-to-talk modifier: ctrl (default), option, cmd, shift, fn, or left_/right_ variants; ignored on Windows
+	TapToggle          *bool         `json:"tap_toggle,omitempty"`           // macOS: bare tap of the hotkey toggles recording on/off (default true); hold-to-talk always works
 	APIKeys        struct {
 		Deepgram   string `json:"deepgram"`
 		OpenAI     string `json:"openai"`
