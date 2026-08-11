@@ -78,6 +78,10 @@ func makeICO(r, g, b, a byte) []byte {
 	return buf.Bytes()
 }
 
+// updateTrayTitle is set by setupTray; switchBackend calls it so the menu-bar
+// tag always reflects the active backend, however the switch happened.
+var updateTrayTitle func(string)
+
 func setupTray(svc *sttService, backend string, log *slog.Logger) {
 	// Load custom icon for idle state, fall back to generated circle
 	exe, _ := os.Executable()
@@ -131,13 +135,31 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			"elevenlabs":       "ElevenLabs Scribe",
 			"whisper_stream":   "Whisper (streaming)",
 			"whisper_realtime": "Whisper (realtime)",
+			"whisper_live":     "Whisper (live)",
 			"groq":             "Groq Whisper",
+			"whisper_local":    "Whisper Local (GPU)",
 		}[backend]
 		if backendLabel == "" {
 			backendLabel = backend
 		}
 		mInfo := systray.AddMenuItem(fmt.Sprintf("STT-Go (%s)", backendLabel), "")
 		mInfo.Disable()
+
+		// Short backend tag shown next to the menu-bar icon so the active
+		// model is visible without opening the menu.
+		trayShort := map[string]string{
+			"deepgram": "DG", "elevenlabs": "EL", "elevenlabs_batch": "EL·B",
+			"api": "W", "whisper_stream": "W·S", "whisper_realtime": "W·RT",
+			"whisper_live": "W·Live", "groq": "Groq", "whisper_local": "Local",
+		}
+		updateTrayTitle = func(b string) {
+			t := trayShort[b]
+			if t == "" {
+				t = b
+			}
+			systray.SetTitle(t)
+		}
+		updateTrayTitle(backend)
 
 		// Live status of the local Whisper sidecar (sidecar/server.py on 127.0.0.1:5111).
 		// Polled in the background so the user can see at a glance whether the
@@ -224,6 +246,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		mElevenLabsBatch := mBackendMenu.AddSubMenuItem("ElevenLabs Scribe (batch + keyterms)", "")
 		mWhisper := mBackendMenu.AddSubMenuItem("Whisper (OpenAI)", "")
 		mWhisperStream := mBackendMenu.AddSubMenuItem("Whisper (streaming)", "")
+		mWhisperLive := mBackendMenu.AddSubMenuItem("Whisper (live — streams while you talk)", "")
 		mWhisperRealtime := mBackendMenu.AddSubMenuItem("Whisper (realtime)", "")
 		mGroq := mBackendMenu.AddSubMenuItem("Groq Whisper", "")
 		mWhisperLocal := mBackendMenu.AddSubMenuItem("Whisper Local (GPU)", "")
@@ -236,6 +259,8 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mElevenLabsBatch.Check()
 		case "whisper_stream":
 			mWhisperStream.Check()
+		case "whisper_live":
+			mWhisperLive.Check()
 		case "whisper_realtime":
 			mWhisperRealtime.Check()
 		case "groq":
@@ -251,6 +276,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mElevenLabsBatch.Uncheck()
 			mWhisper.Uncheck()
 			mWhisperStream.Uncheck()
+			mWhisperLive.Uncheck()
 			mWhisperRealtime.Uncheck()
 			mGroq.Uncheck()
 			mWhisperLocal.Uncheck()
@@ -284,6 +310,12 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mWhisperStream.Check()
 			svc.switchBackend("whisper_stream")
 			mInfo.SetTitle("STT-Go (Whisper streaming)")
+		})
+		mWhisperLive.Click(func() {
+			uncheckAllBackends()
+			mWhisperLive.Check()
+			svc.switchBackend("whisper_live")
+			mInfo.SetTitle("STT-Go (Whisper live)")
 		})
 		mWhisperRealtime.Click(func() {
 			uncheckAllBackends()

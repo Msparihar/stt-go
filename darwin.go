@@ -40,7 +40,17 @@ static int sttAccessibilityPrompt() {
 // evType: 1 = flagsChanged, 2 = keyDown, 3 = keyUp
 extern void goHotkeyFlags(int evType, long long keycode, unsigned long long flags);
 
+// Marker stamped on every keyboard event this app posts (typing, backspace),
+// so the hotkey tap can ignore its own output: typed events carry no modifier
+// flags, and treating them as real input made the app think the hotkey was
+// released whenever it typed while the user was already holding for the next
+// dictation.
+#define STT_EVENT_MARKER 0x53545447
+
 static CGEventRef sttHotkeyTapCB(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *info) {
+	if (CGEventGetIntegerValueField(event, kCGEventSourceUserData) == STT_EVENT_MARKER) {
+		return event;
+	}
 	if (type == kCGEventFlagsChanged || type == kCGEventKeyDown || type == kCGEventKeyUp) {
 		goHotkeyFlags(
 			type == kCGEventFlagsChanged ? 1 : (type == kCGEventKeyDown ? 2 : 3),
@@ -84,10 +94,12 @@ static int sttModifierDown(unsigned long long mask) {
 static void sttTypeUTF16(const UniChar *chars, long len) {
 	CGEventRef down = CGEventCreateKeyboardEvent(NULL, 0, true);
 	CGEventKeyboardSetUnicodeString(down, len, chars);
+	CGEventSetIntegerValueField(down, kCGEventSourceUserData, STT_EVENT_MARKER);
 	CGEventPost(kCGHIDEventTap, down);
 	CFRelease(down);
 	CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
 	CGEventKeyboardSetUnicodeString(up, len, chars);
+	CGEventSetIntegerValueField(up, kCGEventSourceUserData, STT_EVENT_MARKER);
 	CGEventPost(kCGHIDEventTap, up);
 	CFRelease(up);
 }
@@ -95,9 +107,11 @@ static void sttTypeUTF16(const UniChar *chars, long len) {
 // kVK_Delete = 51 (backspace)
 static void sttPressBackspace() {
 	CGEventRef down = CGEventCreateKeyboardEvent(NULL, 51, true);
+	CGEventSetIntegerValueField(down, kCGEventSourceUserData, STT_EVENT_MARKER);
 	CGEventPost(kCGHIDEventTap, down);
 	CFRelease(down);
 	CGEventRef up = CGEventCreateKeyboardEvent(NULL, 51, false);
+	CGEventSetIntegerValueField(up, kCGEventSourceUserData, STT_EVENT_MARKER);
 	CGEventPost(kCGHIDEventTap, up);
 	CFRelease(up);
 }
@@ -110,6 +124,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -165,10 +180,12 @@ var (
 	hotkeyMask  uint64 = maskControl
 	hotkeyCodes []int64
 	hotkeyName  = "Ctrl"
+	hotkeyLog   *slog.Logger
 )
 
 // initHotkey resolves config.json's "hotkey" field (default "ctrl").
 func initHotkey(log *slog.Logger) {
+	hotkeyLog = log
 	key := "ctrl"
 	if appConfig != nil && appConfig.Hotkey != "" {
 		key = strings.ToLower(appConfig.Hotkey)
@@ -197,6 +214,10 @@ func initHotkey(log *slog.Logger) {
 var toggleLatched atomic.Bool
 
 const tapToggleMaxHold = 350 * time.Millisecond
+
+// releaseGrace absorbs spurious sub-250ms "key up" glitches from Logi
+// Options+ synthetic modifiers; a real release just ends 250ms later.
+const releaseGrace = 250 * time.Millisecond
 
 // Tap-detection state. Only touched from the event-tap thread.
 var (
@@ -242,6 +263,15 @@ func goHotkeyFlags(evType C.int, keycode C.longlong, flags C.ulonglong) {
 			}
 		}
 		tapWasHeld = held
+	}
+	// Log press/release transitions with their raw event so an early release
+	// can be traced to its source: keycode 59/62 = real keyboard Ctrl,
+	// 65535 = synthetic (Logi Options+), evType 1 with other keycodes = a
+	// bare flags drop.
+	if held != hotkeyHeld.Load() && hotkeyLog != nil {
+		hotkeyLog.Info("[KEY] hotkey transition",
+			"held", held, "evType", int(evType), "keycode", int64(keycode),
+			"flags", "0x"+strconv.FormatUint(uint64(flags), 16))
 	}
 	hotkeyHeld.Store(held)
 }
