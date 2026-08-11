@@ -50,7 +50,9 @@ func transcribeWhisper(ctx context.Context, pcm []byte, apiKey, lang string, log
 	w := multipart.NewWriter(&body)
 	fw, _ := w.CreateFormFile("file", "audio.wav")
 	fw.Write(wav)
-	w.WriteField("model", "whisper-1")
+	// gpt-transcribe: beat whisper-1 and both gpt-4o-transcribe variants on
+	// accuracy and latency in the Aug 2026 benchmark on real dictation clips.
+	w.WriteField("model", "gpt-transcribe")
 	w.WriteField("language", lang)
 	w.WriteField("prompt", whisperPrompt)
 	w.Close()

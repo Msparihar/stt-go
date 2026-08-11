@@ -15,6 +15,9 @@ import (
 
 const hotkeyName = "Right Alt"
 
+// No release grace on Windows: Right Alt is a real key with clean edges.
+const releaseGrace = 0
+
 // acquireSingleInstance creates a named mutex; a second copy sees
 // ERROR_ALREADY_EXISTS and refuses to start.
 func acquireSingleInstance() bool {

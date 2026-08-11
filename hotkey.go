@@ -23,18 +23,20 @@ func (s *sttService) onPress() {
 
 	s.recT0 = time.Now()
 
-	// StreamingMode: open a per-session WebSocket before the recorder starts.
-	// Always uses OPENAI_API_KEY regardless of the active transcription backend.
-	// We still buffer audio locally as a fallback in case the WS fails mid-session.
-	if appConfig.StreamingMode {
+	// StreamingMode / whisper_live: open a per-session WebSocket before the
+	// recorder starts. Always uses OPENAI_API_KEY regardless of the active
+	// transcription backend. We still buffer audio locally as a fallback in
+	// case the WS fails mid-session. whisper_live streams audio during the
+	// hold but types only at release; StreamingMode also types live.
+	if appConfig.StreamingMode || s.backend == "whisper_live" {
 		openaiKey := readEnvKey("OPENAI_API_KEY")
 		if openaiKey != "" {
 			ctx, cancel := context.WithCancel(context.Background())
 			s.rtCtxCancel = cancel
 			s.rtFinalText = ""
-			s.startRTSession(ctx, openaiKey)
+			s.startRTSession(ctx, openaiKey, appConfig.StreamingMode)
 		} else {
-			s.log.Warn("[RT-WS] StreamingMode enabled but OPENAI_API_KEY not set, skipping")
+			s.log.Warn("[RT-WS] realtime session wanted but OPENAI_API_KEY not set, skipping")
 		}
 	}
 
@@ -140,6 +142,27 @@ func (s *sttService) onRelease() {
 			usedBackend = "whisper_realtime_stream"
 			typedBeforeStop := s.rtTyper.typed
 			text = s.stopRTSession()
+			// Session died without typing or transcribing anything — recover
+			// the take from the local buffer instead of losing it.
+			if text == "" && typedBeforeStop == "" {
+				s.log.Warn("[RT-WS] streaming session produced nothing, falling back to whisper_stream")
+				usedBackend = "whisper_stream_fallback"
+				if s.rtCtxCancel != nil {
+					s.rtCtxCancel()
+					s.rtCtxCancel = nil
+				}
+				cfg := defaultRetryConfig()
+				cfg.onRetry = func() { closeIdleConns(whisperStreamHTTPClient) }
+				res := withRetry(context.Background(), cfg, "whisper_stream", s.log,
+					func(ctx context.Context) (string, error) {
+						return transcribeWhisperStream(ctx, pcm, s.openaiKey, s.lang, s.log)
+					})
+				text, transcribeErr = res.text, res.err
+				if transcribeErr == nil && text != "" {
+					text = postProcess(text)
+					typeText(text, targetHwnd, s.log)
+				}
+			}
 			s.rtTyper = nil
 			if s.rtCtxCancel != nil {
 				s.rtCtxCancel()
@@ -194,6 +217,28 @@ func (s *sttService) onRelease() {
 			if transcribeErr == nil && text != "" {
 				text = postProcess(text)
 				typeText(text, targetHwnd, s.log)
+			}
+		} else if s.backend == "whisper_live" {
+			// Audio was streamed live; take the final transcript and type it
+			// once below via the normal path. Context is cancelled AFTER
+			// stopRTSession so the read pump stays alive for the completed
+			// event.
+			usedBackend = "whisper_live"
+			text = s.stopRTSession()
+			if s.rtCtxCancel != nil {
+				s.rtCtxCancel()
+				s.rtCtxCancel = nil
+			}
+			if text == "" {
+				s.log.Warn("[RT-WS] live session unavailable or empty, falling back to whisper_stream")
+				usedBackend = "whisper_live_fallback"
+				cfg := defaultRetryConfig()
+				cfg.onRetry = func() { closeIdleConns(whisperStreamHTTPClient) }
+				res := withRetry(context.Background(), cfg, "whisper_stream", s.log,
+					func(ctx context.Context) (string, error) {
+						return transcribeWhisperStream(ctx, pcm, s.openaiKey, s.lang, s.log)
+					})
+				text, transcribeErr = res.text, res.err
 			}
 		} else {
 			if s.rtCtxCancel != nil {
@@ -250,6 +295,21 @@ func (s *sttService) onRelease() {
 				text, transcribeErr = res.text, res.err
 			case "deepgram", "elevenlabs":
 				text, usedBackend, transcribeErr = s.raceTranscribe(pcm, duration)
+			}
+		}
+
+		// Never type a repetition wall. Retry the same audio through
+		// ElevenLabs REST once; if that also fails, type nothing — the
+		// audio stays in debug-audio/ either way.
+		if transcribeErr == nil && text != "" && isHallucinationWall(text) {
+			s.log.Warn("[STT] hallucination wall suppressed, retrying via ElevenLabs REST",
+				"backend", usedBackend, "audio_file", debugFile)
+			text = ""
+			if elKey := readEnvKey("ELEVENLABS_API_KEY"); elKey != "" {
+				if fb, err := transcribeElevenLabsREST(context.Background(), pcm, elKey, s.lang, s.log); err == nil && !isHallucinationWall(fb) {
+					text = fb
+					usedBackend += "+elevenlabs_rescue"
+				}
 			}
 		}
 

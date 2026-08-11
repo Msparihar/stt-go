@@ -8,6 +8,26 @@ import (
 	"time"
 )
 
+// isHallucinationWall reports whether a transcript is a degenerate repetition
+// loop — local Whisper on noisy or narrowband audio can emit hundreds of
+// copies of one word ("pee pee pee..."). Such output must never be typed.
+func isHallucinationWall(text string) bool {
+	words := strings.Fields(text)
+	if len(words) < 12 {
+		return false
+	}
+	counts := make(map[string]int, len(words))
+	best := 0
+	for _, w := range words {
+		k := strings.ToLower(strings.Trim(w, ".,!?"))
+		counts[k]++
+		if counts[k] > best {
+			best = counts[k]
+		}
+	}
+	return float64(best)/float64(len(words)) >= 0.6
+}
+
 // Case-insensitive replacements applied to every transcription result.
 // Populated from appConfig.Replacements at startup via loadReplacements().
 var postProcessReplacements []struct{ from, to string }
@@ -81,6 +101,12 @@ func newSTTService(backend, lang string, log *slog.Logger) *sttService {
 			log.Error("[SVC] OPENAI_API_KEY not found")
 		}
 		log.Info("[SVC] Whisper Realtime client ready")
+	case "whisper_live":
+		s.apiKey = s.openaiKey
+		if s.apiKey == "" {
+			log.Error("[SVC] OPENAI_API_KEY not found")
+		}
+		log.Info("[SVC] Whisper Live client ready (streams during hold, types at release)")
 	case "deepgram":
 		s.apiKey = readEnvKey("DEEPGRAM_API_KEY")
 		if s.apiKey == "" {
@@ -155,6 +181,12 @@ func (s *sttService) switchBackend(backend string) {
 			s.log.Error("[SVC] OPENAI_API_KEY not found")
 		}
 		s.log.Info("[SVC] Switched to Whisper Realtime")
+	case "whisper_live":
+		s.apiKey = s.openaiKey
+		if s.apiKey == "" {
+			s.log.Error("[SVC] OPENAI_API_KEY not found")
+		}
+		s.log.Info("[SVC] Switched to Whisper Live (streams during hold, types at release)")
 	case "deepgram":
 		s.apiKey = readEnvKey("DEEPGRAM_API_KEY")
 		if s.apiKey == "" {
@@ -185,12 +217,16 @@ func (s *sttService) switchBackend(backend string) {
 		ensureLocalWhisperSidecar(s.log) // spawn sidecar if needed, then warm the model
 		s.log.Info("[SVC] Switched to Local Whisper (faster-whisper sidecar)")
 	}
+	if updateTrayTitle != nil {
+		updateTrayTitle(backend)
+	}
 }
 
 func (s *sttService) run(ctx context.Context) {
 	s.log.Info("[SVC] STT Service running — hold " + hotkeyName + " to record, release to transcribe")
 
 	pressed := false
+	var releasedAt time.Time
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 
@@ -201,12 +237,26 @@ func (s *sttService) run(ctx context.Context) {
 			return
 		case <-tick.C:
 			down := hotkeyDown()
-			if down && !pressed {
-				pressed = true
-				s.onPress()
-			} else if !down && pressed {
-				pressed = false
-				s.onRelease()
+			if down {
+				if pressed && !releasedAt.IsZero() {
+					s.log.Info("[KEY] spurious release absorbed", "gap", time.Since(releasedAt).Round(time.Millisecond))
+				}
+				releasedAt = time.Time{}
+				if !pressed {
+					pressed = true
+					s.onPress()
+				}
+			} else if pressed {
+				// releaseGrace: a release only counts if the key stays up.
+				// Absorbs sub-grace drops (Logi Options+ flakes mid-hold).
+				if releasedAt.IsZero() {
+					releasedAt = time.Now()
+				}
+				if time.Since(releasedAt) >= releaseGrace {
+					pressed = false
+					releasedAt = time.Time{}
+					s.onRelease()
+				}
 			}
 		}
 	}

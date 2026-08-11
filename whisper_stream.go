@@ -27,7 +27,7 @@ func transcribeWhisperStream(ctx context.Context, pcm []byte, apiKey, lang strin
 	w := multipart.NewWriter(&body)
 	fw, _ := w.CreateFormFile("file", "audio.wav")
 	fw.Write(wav)
-	w.WriteField("model", "gpt-4o-mini-transcribe")
+	w.WriteField("model", "gpt-transcribe")
 	w.WriteField("language", lang)
 	w.WriteField("stream", "true")
 	w.WriteField("prompt", whisperPrompt)
