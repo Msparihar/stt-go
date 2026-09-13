@@ -171,21 +171,11 @@ func main() {
 	svc := newSTTService(backend, language, log)
 	svc.overlay = newWaveOverlay(log)
 
-	// Resolve saved mic preference
+	// Keep the saved name and resolve it against the live device list whenever
+	// recording starts. Numeric device indexes are unstable across hot-plug events.
 	if appConfig.MicDevice != "" {
-		mics := listMics()
-		found := false
-		for _, m := range mics {
-			if m.Name == appConfig.MicDevice {
-				svc.rec.setDeviceID(m.ID)
-				log.Info("[CFG] Using saved microphone", "name", m.Name, "id", m.ID)
-				found = true
-				break
-			}
-		}
-		if !found {
-			log.Warn("[CFG] Saved microphone not found, using system default", "saved", appConfig.MicDevice)
-		}
+		svc.rec.setDeviceName(appConfig.MicDevice)
+		log.Info("[CFG] Using saved microphone", "name", appConfig.MicDevice)
 	}
 
 	// Clean up files older than 7 days

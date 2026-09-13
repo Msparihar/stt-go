@@ -11,9 +11,6 @@ import (
 	"github.com/gen2brain/malgo"
 )
 
-// deviceDefault mirrors waveMapper on Windows: use the system default mic.
-const deviceDefault = ^uintptr(0)
-
 // ── Mic enumeration ────────────────────────────────────────────────
 
 type micDevice struct {
@@ -45,11 +42,11 @@ func listMics() []micDevice {
 // ── Audio recorder (miniaudio via malgo) ───────────────────────────
 
 type recorder struct {
-	ctx      *malgo.AllocatedContext
-	device   *malgo.Device
-	mu       sync.Mutex
-	running  bool
-	deviceID uintptr
+	ctx        *malgo.AllocatedContext
+	device     *malgo.Device
+	mu         sync.Mutex
+	running    bool
+	deviceName string
 
 	allData    []byte
 	byteCount  int
@@ -59,16 +56,16 @@ type recorder struct {
 }
 
 func newRecorder(log *slog.Logger) *recorder {
-	r := &recorder{log: log, deviceID: deviceDefault}
-	r.log.Info("[REC] newRecorder: created", "deviceID", "default")
+	r := &recorder{log: log}
+	r.log.Info("[REC] newRecorder: created", "device", "system default")
 	return r
 }
 
-func (r *recorder) setDeviceID(id uintptr) {
+func (r *recorder) setDeviceName(name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.log.Info("[REC] Device ID changed", "old", r.deviceID, "new", id)
-	r.deviceID = id
+	r.log.Info("[REC] Device changed", "old", r.deviceName, "new", name)
+	r.deviceName = name
 }
 
 func (r *recorder) start() error {
@@ -90,14 +87,28 @@ func (r *recorder) start() error {
 	cfg.SampleRate = sampleRate
 	cfg.PeriodSizeInMilliseconds = bufDurationMs
 
-	// Resolve saved mic index against the current enumeration.
-	if r.deviceID != deviceDefault {
-		if infos, err := ctx.Devices(malgo.Capture); err == nil && int(r.deviceID) < len(infos) {
-			id := infos[r.deviceID].ID
-			cfg.Capture.DeviceID = id.Pointer()
-			r.log.Info("[REC] start: using selected mic", "index", r.deviceID, "name", infos[r.deviceID].Name())
+	// Device enumeration order changes whenever Bluetooth devices connect or
+	// disconnect. Resolve the saved name against the fresh enumeration for every
+	// recording instead of retaining a stale numeric index.
+	if r.deviceName != "" {
+		infos, listErr := ctx.Devices(malgo.Capture)
+		if listErr != nil {
+			r.log.Warn("[REC] start: microphone enumeration failed, using system default", "name", r.deviceName, "err", listErr)
 		} else {
-			r.log.Warn("[REC] start: saved mic index out of range, using default", "index", r.deviceID)
+			found := false
+			for _, info := range infos {
+				if info.Name() != r.deviceName {
+					continue
+				}
+				id := info.ID
+				cfg.Capture.DeviceID = id.Pointer()
+				r.log.Info("[REC] start: using selected mic", "name", info.Name())
+				found = true
+				break
+			}
+			if !found {
+				r.log.Warn("[REC] start: selected microphone not found, using system default", "name", r.deviceName)
+			}
 		}
 	}
 
