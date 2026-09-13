@@ -70,14 +70,14 @@ func listMics() []micDevice {
 // ── Audio recorder ─────────────────────────────────────────────────
 
 type recorder struct {
-	hwi      uintptr
-	event    windows.Handle
-	hdrs     [numBufs]waveHdr
-	bufs     [numBufs][]byte
-	mu       sync.Mutex
-	running  bool
-	done     chan struct{}
-	deviceID uintptr
+	hwi        uintptr
+	event      windows.Handle
+	hdrs       [numBufs]waveHdr
+	bufs       [numBufs][]byte
+	mu         sync.Mutex
+	running    bool
+	done       chan struct{}
+	deviceName string
 
 	allData    []byte
 	byteCount  int
@@ -87,16 +87,16 @@ type recorder struct {
 }
 
 func newRecorder(log *slog.Logger) *recorder {
-	r := &recorder{log: log, deviceID: waveMapper}
-	r.log.Info("[REC] newRecorder: created", "deviceID", waveMapper)
+	r := &recorder{log: log}
+	r.log.Info("[REC] newRecorder: created", "device", "system default")
 	return r
 }
 
-func (r *recorder) setDeviceID(id uintptr) {
+func (r *recorder) setDeviceName(name string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.log.Info("[REC] Device ID changed", "old", r.deviceID, "new", id)
-	r.deviceID = id
+	r.log.Info("[REC] Device changed", "old", r.deviceName, "new", name)
+	r.deviceName = name
 }
 
 func (r *recorder) start() error {
@@ -124,13 +124,27 @@ func (r *recorder) start() error {
 		BlockAlign:     blockAlign,
 		BitsPerSample:  bitsPerSample,
 	}
+	deviceID := uintptr(waveMapper)
+	if r.deviceName != "" {
+		found := false
+		for _, mic := range listMics() {
+			if mic.Name == r.deviceName {
+				deviceID = mic.ID
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.log.Warn("[REC] start: selected microphone not found, using system default", "name", r.deviceName)
+		}
+	}
 
 	ret, _, _ := pWaveInOpen.Call(
 		uintptr(unsafe.Pointer(&r.hwi)),
-		r.deviceID, uintptr(unsafe.Pointer(&wfx)),
+		deviceID, uintptr(unsafe.Pointer(&wfx)),
 		uintptr(ev), 0, cbEvent,
 	)
-	r.log.Info("[REC] start: waveInOpen", "mmresult", ret, "hwi", fmt.Sprintf("0x%X", r.hwi), "deviceID", r.deviceID)
+	r.log.Info("[REC] start: waveInOpen", "mmresult", ret, "hwi", fmt.Sprintf("0x%X", r.hwi), "deviceID", deviceID, "name", r.deviceName)
 	if ret != 0 {
 		windows.CloseHandle(ev)
 		return fmt.Errorf("waveInOpen MMRESULT %d", ret)

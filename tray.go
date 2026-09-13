@@ -116,19 +116,6 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		systray.SetIcon(iconIdle)
 		systray.SetTooltip("STT-Go: Idle")
 
-		// energye/systray does not pop the menu by itself on macOS —
-		// both clicks must call ShowMenu explicitly.
-		systray.SetOnClick(func(m systray.IMenu) {
-			if m != nil {
-				m.ShowMenu()
-			}
-		})
-		systray.SetOnRClick(func(m systray.IMenu) {
-			if m != nil {
-				m.ShowMenu()
-			}
-		})
-
 		backendLabel := map[string]string{
 			"deepgram":         "Deepgram Nova-3",
 			"api":              "Whisper",
@@ -207,37 +194,91 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 
 		// Microphone submenu
 		mMicMenu := systray.AddMenuItem("Microphone", "Select input device")
-		mics := listMics()
-		var micItems []*systray.MenuItem
-		activeDeviceID := svc.rec.deviceID
+		micItems := make(map[string]*systray.MenuItem)
+		mDefaultMic := mMicMenu.AddSubMenuItem("System Default", "Follow the macOS input device")
+		mNoMic := mMicMenu.AddSubMenuItem("No microphones found", "")
+		mNoMic.Disable()
+		mNoMic.Hide()
 
-		for _, mic := range mics {
-			item := mMicMenu.AddSubMenuItem(mic.Name, "")
-			if mic.ID == activeDeviceID {
-				item.Check()
+		uncheckAllMics := func() {
+			mDefaultMic.Uncheck()
+			for _, item := range micItems {
+				item.Uncheck()
 			}
-			micID := mic.ID
-			micName := mic.Name
-			item.Click(func() {
-				// Uncheck all, check selected
-				for _, mi := range micItems {
-					mi.Uncheck()
-				}
-				item.Check()
-				svc.rec.setDeviceID(micID)
-				log.Info("[CFG] Switched microphone", "device", micID, "name", micName)
-				// Persist selection to config
-				appConfig.MicDevice = micName
-				if err := saveConfig(appConfig); err != nil {
-					log.Error("[CFG] Failed to save mic preference", "err", err)
-				}
-			})
-			micItems = append(micItems, item)
 		}
-		if len(mics) == 0 {
-			noMic := mMicMenu.AddSubMenuItem("No microphones found", "")
-			noMic.Disable()
+		persistMic := func(name string) {
+			appConfig.MicDevice = name
+			svc.rec.setDeviceName(name)
+			if err := saveConfig(appConfig); err != nil {
+				log.Error("[CFG] Failed to save mic preference", "err", err)
+			}
 		}
+		mDefaultMic.Click(func() {
+			uncheckAllMics()
+			mDefaultMic.Check()
+			persistMic("")
+			log.Info("[CFG] Switched microphone", "name", "system default")
+		})
+
+		// Refresh on every tray click so Bluetooth microphones connected after
+		// launch appear without restarting the application.
+		refreshMicMenu := func() {
+			mics := listMics()
+			present := make(map[string]bool, len(mics))
+			for _, mic := range mics {
+				micName := mic.Name
+				present[micName] = true
+				item, exists := micItems[micName]
+				if !exists {
+					item = mMicMenu.AddSubMenuItem(micName, "")
+					micItems[micName] = item
+					item.Click(func() {
+						uncheckAllMics()
+						item.Check()
+						persistMic(micName)
+						log.Info("[CFG] Switched microphone", "name", micName)
+					})
+				} else {
+					item.Show()
+				}
+				if appConfig.MicDevice == micName {
+					item.Check()
+				} else {
+					item.Uncheck()
+				}
+			}
+			for name, item := range micItems {
+				if !present[name] {
+					item.Hide()
+				}
+			}
+			if appConfig.MicDevice == "" {
+				mDefaultMic.Check()
+			} else {
+				mDefaultMic.Uncheck()
+			}
+			if len(mics) == 0 {
+				mNoMic.Show()
+			} else {
+				mNoMic.Hide()
+			}
+		}
+		refreshMicMenu()
+
+		// energye/systray does not pop the menu by itself on macOS. Refresh
+		// devices immediately before showing it, for both left and right clicks.
+		systray.SetOnClick(func(m systray.IMenu) {
+			refreshMicMenu()
+			if m != nil {
+				m.ShowMenu()
+			}
+		})
+		systray.SetOnRClick(func(m systray.IMenu) {
+			refreshMicMenu()
+			if m != nil {
+				m.ShowMenu()
+			}
+		})
 
 		// Backend submenu
 		mBackendMenu := systray.AddMenuItem("Backend", "Select transcription backend")
