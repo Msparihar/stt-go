@@ -16,6 +16,7 @@ type Config struct {
 	Language       string            `json:"language"`
 	MicDevice      string            `json:"mic_device,omitempty"` // saved mic name, empty = system default
 	Keyterms       []string          `json:"keyterms"`
+	GraniteKeyterms []string         `json:"granite_keyterms,omitempty"` // short list for Granite; long lists make it drop punctuation
 	Replacements   map[string]string `json:"replacements"` // from -> to
 	StreamingMode  bool              `json:"streaming_mode"`
 	RealtimeModel  string            `json:"realtime_model,omitempty"` // default "gpt-4o-mini-transcribe"

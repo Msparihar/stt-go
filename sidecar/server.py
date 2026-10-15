@@ -16,7 +16,7 @@ Whisper: send ?model=granite to /load or the X-Model: granite header to
 
 POST /load            load the model (idempotent); ?model=granite for Granite
 POST /unload          free whichever model is loaded (idempotent)
-POST /transcribe      WAV body, headers X-Language / X-Prompt / X-Model; auto-loads if idle
+POST /transcribe      WAV body, headers X-Language / X-Prompt / X-Model / X-Keywords; auto-loads if idle
 GET  /health          { loaded: bool, model, compute }
 
 Run:  <venv python> sidecar/server.py
@@ -71,9 +71,10 @@ MODEL_DIR = os.environ.get("WHISPER_MODEL_DIR", _default_model_dir)
 # MLX pulls converted weights from the mlx-community HF repos.
 MLX_MODEL = os.environ.get("WHISPER_MLX_MODEL", f"mlx-community/whisper-{MODEL_SIZE}")
 
-# Granite Speech 4.1 via mlx-audio. Its keyword prompt suppresses punctuation and
-# capitals (measured on 50 of Manish's clips), so it gets the plain prompt and
-# ignores X-Prompt.
+# Granite Speech 4.1 via mlx-audio. It ignores X-Prompt and takes an optional
+# short X-Keywords list instead. On 50 of Manish's clips, 19 keywords got his
+# terms right in 46/47 clips (35/47 without) but cut punctuation from 45 to 14
+# clips; he prefers the right words.
 GRANITE_MODEL = os.environ.get("GRANITE_MODEL", os.path.expanduser("~/models/granite-speech-4.1-2b-mlx-6bit"))
 GRANITE_PROMPT = "transcribe the speech with proper punctuation and capitalization."
 
@@ -145,7 +146,7 @@ def ensure_granite():
         return _granite
 
 
-def transcribe_granite(wav):
+def transcribe_granite(wav, keywords=None):
     """Run Granite on WAV bytes; returns (text, audio_duration_sec)."""
     import tempfile
     import wave
@@ -157,7 +158,8 @@ def transcribe_granite(wav):
     with tempfile.NamedTemporaryFile(suffix=".wav") as f:
         f.write(wav)
         f.flush()
-        result = model.generate(f.name, prompt=GRANITE_PROMPT, temperature=0.0)
+        prompt = GRANITE_PROMPT + (" Keywords: " + keywords if keywords else "")
+        result = model.generate(f.name, prompt=prompt, temperature=0.0)
     return result.text.strip(), duration
 
 
@@ -252,7 +254,7 @@ class Handler(BaseHTTPRequestHandler):
                 ensure_loaded()  # lazy-load if STT-Go didn't pre-warm
             t0 = time.time()
             if use_granite:
-                text, duration = transcribe_granite(wav)
+                text, duration = transcribe_granite(wav, self.headers.get("X-Keywords", ""))
             else:
                 text, duration = transcribe_wav(wav, lang, prompt)
             infer = time.time() - t0

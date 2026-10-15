@@ -129,6 +129,9 @@ func transcribeWhisperLocal(ctx context.Context, pcm []byte, model string, log *
 	if model != "" {
 		req.Header.Set("X-Model", model)
 	}
+	if model == "granite" && len(appConfig.GraniteKeyterms) > 0 {
+		req.Header.Set("X-Keywords", strings.Join(appConfig.GraniteKeyterms, ", "))
+	}
 
 	resp, err := whisperLocalHTTPClient.Do(req)
 	if err != nil {
