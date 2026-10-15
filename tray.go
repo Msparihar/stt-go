@@ -101,7 +101,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 	var localOffline atomic.Bool
 	var lastTrayState atomic.Int32
 	idleIcon := func() []byte {
-		if svc.backend == "whisper_local" && localOffline.Load() {
+		if isLocalBackend(svc.backend) && localOffline.Load() {
 			return iconOffline
 		}
 		return iconIdle
@@ -125,6 +125,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			"whisper_live":     "Whisper (live)",
 			"groq":             "Groq Whisper",
 			"whisper_local":    "Whisper Local (GPU)",
+			"granite_local":    "Granite 4.1 Local",
 		}[backend]
 		if backendLabel == "" {
 			backendLabel = backend
@@ -137,7 +138,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		trayShort := map[string]string{
 			"deepgram": "DG", "elevenlabs": "EL", "elevenlabs_batch": "EL·B",
 			"api": "W", "whisper_stream": "W·S", "whisper_realtime": "W·RT",
-			"whisper_live": "W·Live", "groq": "Groq", "whisper_local": "Local",
+			"whisper_live": "W·Live", "groq": "Groq", "whisper_local": "Local", "granite_local": "Granite",
 		}
 		updateTrayTitle = func(b string) {
 			t := trayShort[b]
@@ -189,7 +190,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		mRestartLocal := systray.AddMenuItem("Restart local model", "Kill and respawn the Whisper GPU sidecar")
 		mRestartLocal.Click(func() {
 			mLocalStatus.SetTitle("Local model: restarting…")
-			restartLocalWhisperSidecar(log)
+			restartLocalWhisperSidecar(localModelFor(svc.backend), log)
 		})
 
 		// Microphone submenu
@@ -291,6 +292,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 		mWhisperRealtime := mBackendMenu.AddSubMenuItem("Whisper (realtime)", "")
 		mGroq := mBackendMenu.AddSubMenuItem("Groq Whisper", "")
 		mWhisperLocal := mBackendMenu.AddSubMenuItem("Whisper Local (GPU)", "")
+		mGraniteLocal := mBackendMenu.AddSubMenuItem("Granite 4.1 Local", "")
 		switch backend {
 		case "deepgram":
 			mDeepgram.Check()
@@ -308,6 +310,8 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mGroq.Check()
 		case "whisper_local":
 			mWhisperLocal.Check()
+		case "granite_local":
+			mGraniteLocal.Check()
 		default:
 			mWhisper.Check()
 		}
@@ -321,6 +325,7 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mWhisperRealtime.Uncheck()
 			mGroq.Uncheck()
 			mWhisperLocal.Uncheck()
+			mGraniteLocal.Uncheck()
 		}
 		mDeepgram.Click(func() {
 			uncheckAllBackends()
@@ -375,6 +380,12 @@ func setupTray(svc *sttService, backend string, log *slog.Logger) {
 			mWhisperLocal.Check()
 			svc.switchBackend("whisper_local")
 			mInfo.SetTitle("STT-Go (Whisper Local GPU)")
+		})
+		mGraniteLocal.Click(func() {
+			uncheckAllBackends()
+			mGraniteLocal.Check()
+			svc.switchBackend("granite_local")
+			mInfo.SetTitle("STT-Go (Granite 4.1 Local)")
 		})
 
 		systray.AddSeparator()

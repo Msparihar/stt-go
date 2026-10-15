@@ -24,14 +24,32 @@ func localWhisperBase() string {
 	return strings.TrimSuffix(url, "/transcribe")
 }
 
+// isLocalBackend reports whether a backend runs on the local sidecar.
+func isLocalBackend(backend string) bool {
+	return backend == "whisper_local" || backend == "granite_local"
+}
+
+// localModelFor maps a local backend to the sidecar's model name ("" = Whisper).
+func localModelFor(backend string) string {
+	if backend == "granite_local" {
+		return "granite"
+	}
+	return ""
+}
+
 // loadLocalWhisper asks the sidecar to load the model into VRAM. Fire-and-forget
 // from switchBackend so the tray click returns instantly; the model warms in the
 // background and is ready by the time the user finishes their first utterance.
-func loadLocalWhisper(log *slog.Logger) {
+// model is "" for Whisper or "granite" for Granite Speech 4.1.
+func loadLocalWhisper(model string, log *slog.Logger) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, "POST", localWhisperBase()+"/load", nil)
+		url := localWhisperBase() + "/load"
+		if model != "" {
+			url += "?model=" + model
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 		if err != nil {
 			return
 		}
@@ -41,7 +59,7 @@ func loadLocalWhisper(log *slog.Logger) {
 			return
 		}
 		resp.Body.Close()
-		log.Info("[LOCAL] model preload requested")
+		log.Info("[LOCAL] model preload requested", "model", model)
 	}()
 }
 
@@ -91,14 +109,14 @@ func localWhisperHealth(ctx context.Context) (reachable, loaded bool) {
 // transcribeWhisperLocal sends WAV audio to the local faster-whisper sidecar
 // (server.py) running on the GPU. Same request shape as the other REST
 // backends, but the audio never leaves the machine.
-func transcribeWhisperLocal(ctx context.Context, pcm []byte, log *slog.Logger) (string, error) {
+func transcribeWhisperLocal(ctx context.Context, pcm []byte, model string, log *slog.Logger) (string, error) {
 	t0 := time.Now()
 	duration := float64(len(pcm)) / float64(avgBytesPerSec)
 	url := appConfig.LocalWhisperURL
 	if url == "" {
 		url = defaultLocalWhisperURL
 	}
-	log.Info("[LOCAL] request start", "url", url, "duration", fmt.Sprintf("%.1fs", duration))
+	log.Info("[LOCAL] request start", "url", url, "model", model, "duration", fmt.Sprintf("%.1fs", duration))
 
 	wav := pcmToWAV(pcm)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(wav))
@@ -108,6 +126,9 @@ func transcribeWhisperLocal(ctx context.Context, pcm []byte, log *slog.Logger) (
 	req.Header.Set("Content-Type", "audio/wav")
 	req.Header.Set("X-Language", appConfig.Language)
 	req.Header.Set("X-Prompt", whisperPrompt) // keyterm biasing, parity with OpenAI backend
+	if model != "" {
+		req.Header.Set("X-Model", model)
+	}
 
 	resp, err := whisperLocalHTTPClient.Do(req)
 	if err != nil {

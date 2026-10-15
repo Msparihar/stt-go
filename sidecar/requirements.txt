@@ -6,3 +6,5 @@ nvidia-cudnn-cu12; sys_platform != "darwin"
 # macOS (Apple Silicon, Metal)
 mlx-whisper; sys_platform == "darwin"
 hf_transfer; sys_platform == "darwin"
+mlx-audio>=0.4.5; sys_platform == "darwin"  # Granite Speech 4.1 backend
+jinja2; sys_platform == "darwin"

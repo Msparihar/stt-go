@@ -285,12 +285,13 @@ func (s *sttService) onRelease() {
 						return transcribeGroq(ctx, s.apiKey, pcm, s.log)
 					})
 				text, transcribeErr = res.text, res.err
-			case "whisper_local":
+			case "whisper_local", "granite_local":
 				cfg := defaultRetryConfig()
 				cfg.onRetry = func() { closeIdleConns(whisperLocalHTTPClient) }
-				res := withRetry(context.Background(), cfg, "whisper_local", s.log,
+				model := localModelFor(s.backend)
+				res := withRetry(context.Background(), cfg, s.backend, s.log,
 					func(ctx context.Context) (string, error) {
-						return transcribeWhisperLocal(ctx, pcm, s.log)
+						return transcribeWhisperLocal(ctx, pcm, model, s.log)
 					})
 				text, transcribeErr = res.text, res.err
 			case "deepgram", "elevenlabs":

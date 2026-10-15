@@ -134,8 +134,11 @@ func newSTTService(backend, lang string, log *slog.Logger) *sttService {
 		}
 		log.Info("[SVC] Groq Whisper client ready")
 	case "whisper_local":
-		ensureLocalWhisperSidecar(log) // spawn sidecar if needed, then warm the model
+		ensureLocalWhisperSidecar("", log) // spawn sidecar if needed, then warm the model
 		log.Info("[SVC] Local Whisper client ready (faster-whisper sidecar)")
+	case "granite_local":
+		ensureLocalWhisperSidecar("granite", log)
+		log.Info("[SVC] Local Granite client ready (sidecar)")
 	}
 	log.Info("[SVC] STT Service initialized", "backend", backend, "language", lang)
 	return s
@@ -156,8 +159,9 @@ func (s *sttService) switchBackend(backend string) {
 		s.elc.close()
 		s.elc = nil
 	}
-	// Free local-Whisper VRAM when switching away from it.
-	if s.backend == "whisper_local" && backend != "whisper_local" {
+	// Free local-model VRAM when switching away from the sidecar. Switching
+	// between Whisper and Granite needs no unload: the sidecar swaps them itself.
+	if isLocalBackend(s.backend) && !isLocalBackend(backend) {
 		unloadLocalWhisper(s.log)
 	}
 
@@ -214,8 +218,11 @@ func (s *sttService) switchBackend(backend string) {
 		}
 		s.log.Info("[SVC] Switched to Groq Whisper")
 	case "whisper_local":
-		ensureLocalWhisperSidecar(s.log) // spawn sidecar if needed, then warm the model
+		ensureLocalWhisperSidecar("", s.log) // spawn sidecar if needed, then warm the model
 		s.log.Info("[SVC] Switched to Local Whisper (faster-whisper sidecar)")
+	case "granite_local":
+		ensureLocalWhisperSidecar("granite", s.log)
+		s.log.Info("[SVC] Switched to Local Granite (sidecar)")
 	}
 	if updateTrayTitle != nil {
 		updateTrayTitle(backend)

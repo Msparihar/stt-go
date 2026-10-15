@@ -72,30 +72,30 @@ func spawnLocalWhisperSidecar(port string, log *slog.Logger) error {
 // ensureLocalWhisperSidecar guarantees a healthy sidecar is running, then warms
 // the model. Reuses an already-healthy server; otherwise frees the port and
 // spawns a fresh one. Runs in the background so callers never block.
-func ensureLocalWhisperSidecar(log *slog.Logger) {
+func ensureLocalWhisperSidecar(model string, log *slog.Logger) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		reachable, _ := localWhisperHealth(ctx)
 		cancel()
 		if reachable {
 			log.Info("[LOCAL] sidecar already healthy, reusing")
-			loadLocalWhisper(log)
+			loadLocalWhisper(model, log)
 			return
 		}
-		respawnLocalWhisper(log)
+		respawnLocalWhisper(model, log)
 	}()
 }
 
 // restartLocalWhisperSidecar unconditionally frees the port and respawns the
 // sidecar, even if one appears reachable — used by the tray "retry" action when
 // the model is wedged. Runs in the background so the tray click returns instantly.
-func restartLocalWhisperSidecar(log *slog.Logger) {
-	go respawnLocalWhisper(log)
+func restartLocalWhisperSidecar(model string, log *slog.Logger) {
+	go respawnLocalWhisper(model, log)
 }
 
 // respawnLocalWhisper frees the port, spawns a fresh sidecar, waits for health,
 // then warms the model. Synchronous; callers run it in a goroutine.
-func respawnLocalWhisper(log *slog.Logger) {
+func respawnLocalWhisper(model string, log *slog.Logger) {
 	port := localWhisperPort()
 	freeLocalWhisperPort(port, log)
 	if err := spawnLocalWhisperSidecar(port, log); err != nil {
@@ -110,7 +110,7 @@ func respawnLocalWhisper(log *slog.Logger) {
 		ccancel()
 		if reachable {
 			log.Info("[LOCAL] sidecar is up")
-			loadLocalWhisper(log)
+			loadLocalWhisper(model, log)
 			return
 		}
 		time.Sleep(600 * time.Millisecond)

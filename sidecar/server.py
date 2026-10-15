@@ -10,15 +10,20 @@ only when STT-Go switches to the whisper_local backend (POST /load, or lazily on
 the first /transcribe) and is freed when STT-Go switches away (POST /unload). So
 the ~1.5GB of GPU memory is occupied only while the local backend is selected.
 
-POST /load            load the model (idempotent)
-POST /unload          free the model (idempotent)
-POST /transcribe      WAV body, headers X-Language / X-Prompt; auto-loads if idle
+On macOS the sidecar can also serve IBM Granite Speech 4.1 (mlx-audio) instead of
+Whisper: send ?model=granite to /load or the X-Model: granite header to
+/transcribe. Only one model is kept loaded at a time.
+
+POST /load            load the model (idempotent); ?model=granite for Granite
+POST /unload          free whichever model is loaded (idempotent)
+POST /transcribe      WAV body, headers X-Language / X-Prompt / X-Model; auto-loads if idle
 GET  /health          { loaded: bool, model, compute }
 
 Run:  <venv python> sidecar/server.py
 Env:  WHISPER_MODEL (default large-v3-turbo), WHISPER_COMPUTE (float16),
       WHISPER_PORT (5111), WHISPER_MODEL_DIR (default: sidecar/models/),
-      WHISPER_ENGINE (mlx|faster, default auto)
+      WHISPER_ENGINE (mlx|faster, default auto),
+      GRANITE_MODEL (default ~/models/granite-speech-4.1-2b-mlx-6bit)
 """
 import io
 import os
@@ -66,8 +71,15 @@ MODEL_DIR = os.environ.get("WHISPER_MODEL_DIR", _default_model_dir)
 # MLX pulls converted weights from the mlx-community HF repos.
 MLX_MODEL = os.environ.get("WHISPER_MLX_MODEL", f"mlx-community/whisper-{MODEL_SIZE}")
 
+# Granite Speech 4.1 via mlx-audio. Its keyword prompt suppresses punctuation and
+# capitals (measured on 50 of Manish's clips), so it gets the plain prompt and
+# ignores X-Prompt.
+GRANITE_MODEL = os.environ.get("GRANITE_MODEL", os.path.expanduser("~/models/granite-speech-4.1-2b-mlx-6bit"))
+GRANITE_PROMPT = "transcribe the speech with proper punctuation and capitalization."
+
 # Guarded by _lock; None means "not loaded".
 _model = None
+_granite = None
 _lock = threading.Lock()
 
 
@@ -107,6 +119,48 @@ def ensure_loaded():
         return _model
 
 
+def ensure_granite():
+    """Load Granite, freeing Whisper first so only one model holds GPU memory."""
+    global _granite
+    if _model is not None:
+        unload()
+    with _lock:
+        if _granite is None:
+            t0 = time.time()
+            print(f"[server] loading Granite from {GRANITE_MODEL} via mlx-audio...", flush=True)
+            import tempfile
+            import wave
+            from mlx_audio.stt.utils import load_model
+            _granite = load_model(GRANITE_MODEL)
+            # Warm up on a second of silence: the first generate compiles the
+            # graph (~5s), which would otherwise land on the first dictation.
+            with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+                with wave.open(f.name, "wb") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(16000)
+                    w.writeframes(b"\x00\x00" * 16000)
+                _granite.generate(f.name, prompt=GRANITE_PROMPT, temperature=0.0)
+            print(f"[server] Granite ready in {time.time() - t0:.1f}s", flush=True)
+        return _granite
+
+
+def transcribe_granite(wav):
+    """Run Granite on WAV bytes; returns (text, audio_duration_sec)."""
+    import tempfile
+    import wave
+
+    model = ensure_granite()
+    with wave.open(io.BytesIO(wav)) as w:
+        duration = w.getnframes() / float(w.getframerate())
+    # mlx-audio's generate takes a file path, so hand it a temp WAV.
+    with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+        f.write(wav)
+        f.flush()
+        result = model.generate(f.name, prompt=GRANITE_PROMPT, temperature=0.0)
+    return result.text.strip(), duration
+
+
 def transcribe_wav(wav, lang, prompt):
     """Run the active engine on WAV bytes; returns (text, audio_duration_sec)."""
     if ENGINE == "mlx":
@@ -124,8 +178,12 @@ def transcribe_wav(wav, lang, prompt):
 
 
 def unload():
-    global _model
+    global _model, _granite
     with _lock:
+        if _granite is not None:
+            _granite = None
+            gc.collect()
+            print("[server] Granite unloaded, GPU memory freed", flush=True)
         if _model is not None:
             if ENGINE == "mlx":
                 # mlx_whisper caches the model in ModelHolder; drop it there too.
@@ -153,12 +211,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._json(200, {"loaded": _model is not None, "model": MODEL_SIZE, "compute": COMPUTE})
+            model = "granite" if _granite is not None else MODEL_SIZE
+            self._json(200, {"loaded": _model is not None or _granite is not None, "model": model, "compute": COMPUTE})
         else:
             self._json(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path == "/load?model=granite":
+            ensure_granite()
+            self._json(200, {"loaded": True, "model": "granite"})
+            return
         if self.path == "/load":
+            if _granite is not None:
+                unload()
             ensure_loaded()
             self._json(200, {"loaded": True, "model": MODEL_SIZE})
             return
@@ -177,10 +242,19 @@ class Handler(BaseHTTPRequestHandler):
         wav = self.rfile.read(length)
         lang = self.headers.get("X-Language", "en") or None
         prompt = self.headers.get("X-Prompt", "") or None
+        use_granite = self.headers.get("X-Model", "") == "granite"
         try:
-            ensure_loaded()  # lazy-load if STT-Go didn't pre-warm
+            if use_granite:
+                ensure_granite()  # lazy-load if STT-Go didn't pre-warm
+            else:
+                if _granite is not None:
+                    unload()
+                ensure_loaded()  # lazy-load if STT-Go didn't pre-warm
             t0 = time.time()
-            text, duration = transcribe_wav(wav, lang, prompt)
+            if use_granite:
+                text, duration = transcribe_granite(wav)
+            else:
+                text, duration = transcribe_wav(wav, lang, prompt)
             infer = time.time() - t0
         except Exception as exc:  # noqa: BLE001 — report any decode/inference failure to the client
             self._json(500, {"error": str(exc)})
