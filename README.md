@@ -2,63 +2,74 @@
 
 # STT-Go
 
-**The open-source Wispr Flow alternative — hold a key, speak, get text in any app.**
+**The open-source Wispr Flow alternative. Hold a key, speak, get text in any app.**
 
 [![CI](https://github.com/Msparihar/stt-go/actions/workflows/ci.yml/badge.svg)](https://github.com/Msparihar/stt-go/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Msparihar/stt-go)](https://github.com/Msparihar/stt-go/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Platform: Windows | macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0078D4)](#)
+[![Platform: Windows | macOS](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-0078D4)](#quickstart)
+
+<img src="docs/hero.png" alt="STT-Go push-to-talk dictation" width="960">
 
 </div>
 
----
-
-STT-Go is push-to-talk dictation for Windows and macOS. Hold a key, speak, release — the transcript types itself into the focused window: editor, browser, terminal, chat. It is a single Go binary that lives in your system tray, with nine speech engines you can switch at runtime, including a fully offline local Whisper model.
+STT-Go is a single Go application that lives in the system tray. It records 16 kHz mono audio, sends it to the backend you select, applies your replacement rules, and types the result into the window that was focused when recording began. Cloud backends use your own API keys; local Whisper and Granite run through a sidecar on your machine.
 
 ## vs Wispr Flow
 
 | | STT-Go | Wispr Flow |
 |---|---|---|
 | Price | Free, MIT-licensed, open source | Subscription |
-| Offline | Yes — local Whisper `large-v3-turbo` (via MLX on Apple Silicon, ~220 ms per utterance; CUDA on NVIDIA) | No — cloud only |
-| Cloud engines | Bring your own key: Deepgram Nova-3, ElevenLabs Scribe, OpenAI gpt-transcribe, Groq Whisper | Their models |
-| Push-to-talk key | Any modifier, set in `config.json`, no rebuild (macOS; Windows is Right-Alt) | Fixed choices |
-| Your audio | Stays on your disk; goes only to the engine you picked | Their servers |
-| AI auto-editing / tone polish | No — you get what you said | Yes |
+| Offline | Yes: local Whisper `large-v3-turbo` (MLX on Apple Silicon, ~220 ms per utterance; CUDA on NVIDIA) | No, cloud only |
+| Cloud engines | Bring your own key: Deepgram Nova-3, ElevenLabs Scribe, OpenAI, Groq Whisper | Their models |
+| Your audio | Stays on your disk; goes only to the engines you configure | Their servers |
+| AI auto-editing / tone polish | No, you get what you said | Yes |
 
 If you want an assistant that rewrites your speech, Wispr Flow does more. If you want fast, private dictation you control and can read the source of, this is it.
 
 ## Features
 
-- **Hold-to-talk, plus tap-toggle.** Hold the hotkey to dictate, or tap it to start and tap again to stop (macOS, on by default, `tap_toggle` in config).
-- **Nine backends, switchable from the tray.** Deepgram Nova-3, ElevenLabs Scribe (streaming + batch), OpenAI gpt-transcribe (REST, SSE streaming, realtime, live), Groq Whisper, and local Whisper on your GPU. The menu bar shows which one is active.
-- **Race mode — no take is lost.** A streaming backend gets a 2-second head start; if it stalls, REST backends fire in parallel and the best transcript wins. If every engine fails, the audio is saved to `failed-audio/` so you can transcribe it later.
-- **Keyterm biasing + replacements.** Feed your jargon (product names, CLI tools) to the engine, and map common mishears (`"11 labs"` → `"ElevenLabs"`) with a `from → to` dictionary.
-- **Hallucination guard.** Degenerate repetition-wall transcripts from local Whisper are never typed; the audio is retried through another engine instead.
-- **Debug audio.** Every recording lands in `debug-audio/` as WAV (auto-cleaned after 7 days), so you can always check what the mic heard.
+| Dictation | Transcription | Recovery |
+|---|---|---|
+| Hold-to-talk on Windows and macOS; tap-to-toggle on macOS | Ten tray-selectable cloud, streaming, and local backend modes | Streaming race mode, retries, and saved audio when every candidate fails |
+| Types into editors, browsers, terminals, and chat apps | Deepgram, ElevenLabs, OpenAI, Groq, local Whisper, and local Granite | Repetition-wall transcripts are suppressed instead of typed |
+| Select the microphone and backend from the tray | Keyterm hints and case-insensitive replacement rules | Every accepted take is retained in `debug-audio/` for seven days |
 
-## Install
+## How it works
 
-### macOS (Apple Silicon)
+Deepgram and ElevenLabs streaming use the race path below. Their streaming result and every configured REST fallback begin together. A clean streaming result can win inside the two-second decision window; otherwise the first usable REST result wins. A partial streaming result remains a last resort, and a total failure saves the WAV for recovery.
 
-Build from source — needs Go 1.21+ and Xcode command line tools:
-
-```bash
-git clone https://github.com/Msparihar/stt-go.git
-cd stt-go
-go build -o stt-go .
-./stt-go
+```mermaid
+flowchart LR
+    A[Release hotkey] --> B[Finalize buffered audio]
+    B --> C[Streaming backend]
+    B --> D[OpenAI REST fallback]
+    B --> E[ElevenLabs REST fallback]
+    C --> F{Usable result?}
+    D --> F
+    E --> F
+    F -->|Yes| G[Cancel remaining work]
+    G --> H[Apply replacements and type]
+    F -->|Only partial stream| I[Use longest stream candidate]
+    I --> H
+    F -->|No result| J[Save WAV to failed-audio]
 ```
 
-Grant two permissions to the app you launch it from, under **System Settings → Privacy & Security**: **Input Monitoring** (to see the hotkey) and **Accessibility** (to type the transcript). macOS asks for the microphone on first recording. Relaunch the terminal after granting.
+Other selected backends run directly with the same buffered audio and retry policy. Recordings shorter than 0.3 seconds are ignored.
 
-Default hotkey is **Ctrl** — change it with `hotkey` in the config (see below).
+## Quickstart
 
 ### Windows
 
-Download `stt-go_<version>_windows_amd64.zip` from [Releases](https://github.com/Msparihar/stt-go/releases) and unzip anywhere. No installer. Scoop and winget manifests live in [`packaging/`](packaging/); the winget-pkgs submission is pending.
+Download `stt-go_<version>_windows_amd64.zip` from [Releases](https://github.com/Msparihar/stt-go/releases), unzip it, and run `stt-go.exe`. Windows uses **Right Alt** for push-to-talk. Unsigned builds may trigger SmartScreen; choose **More info → Run anyway** if you built or downloaded the binary from this repository.
 
-Or build from source:
+Then run the setup wizard and choose a backend:
+
+```powershell
+.\stt-go.exe --setup
+```
+
+To build it yourself, install Go 1.25.7 and run:
 
 ```powershell
 git clone https://github.com/Msparihar/stt-go.git
@@ -66,58 +77,85 @@ cd stt-go
 go build -ldflags "-H windowsgui" -o stt-go.exe .
 ```
 
-Hotkey is **Right-Alt**. Until signed builds ship, SmartScreen will warn — click **More info → Run anyway**.
+### macOS (Apple Silicon)
 
-## First run
-
-Pick one engine and get a key ([OpenAI](https://platform.openai.com/api-keys), [Deepgram](https://console.deepgram.com/), [ElevenLabs](https://elevenlabs.io/app/settings/api-keys), [Groq](https://console.groq.com/keys)) — or use local Whisper with no key at all. Then either run the wizard:
+Build from source with Go 1.25.7 and the Xcode command line tools:
 
 ```bash
+git clone https://github.com/Msparihar/stt-go.git
+cd stt-go
+go build -o stt-go .
 ./stt-go --setup
+./stt-go
 ```
 
-or set `OPENAI_API_KEY` / `DEEPGRAM_API_KEY` / `ELEVENLABS_API_KEY` / `GROQ_API_KEY` in the environment or `~/.env.local`. Key lookup order: `config.json` → env → `~/.env.local`.
+Grant the terminal or launcher **Input Monitoring** and **Accessibility** access under **System Settings → Privacy & Security**. macOS requests microphone access on the first recording. Relaunch the terminal after changing permissions. The default hotkey is **Control**.
 
-## Local Whisper (offline, free)
+API keys can be saved by the wizard, placed in the environment, or added to `~/.env.local`. Lookup order is `config.json` → environment → `~/.env.local`.
 
-A Python sidecar (`sidecar/server.py`) runs Whisper `large-v3-turbo` on your own hardware — [mlx-whisper](https://github.com/ml-explore/mlx-examples) on Apple Silicon (~220 ms per utterance), [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on NVIDIA/CUDA (~0.9 s on a 4 GB GPU). No key, no audio leaves the machine.
+## Backends
+
+Choose a backend from the tray or set `default_backend` in the configuration:
+
+- Deepgram Nova-3 and ElevenLabs Scribe streaming
+- ElevenLabs Scribe batch
+- OpenAI REST, SSE streaming, live, and realtime modes
+- Groq Whisper
+- Local Whisper and Granite 4.1 through the Python sidecar
+
+Race and comparison features can send audio to more than the selected cloud provider when the corresponding keys are configured. Use local Whisper without cloud keys if audio must remain on the machine.
+
+## Local transcription
+
+The Python sidecar in `sidecar/server.py` runs `large-v3-turbo` through MLX on Apple Silicon or faster-whisper on NVIDIA/CUDA. No API key is required.
 
 ```bash
 cd sidecar
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt   # .venv\Scripts\pip on Windows
+.venv/bin/pip install -r requirements.txt
 ```
 
-Select "Whisper Local (GPU)" from the tray; STT-Go spawns and manages the sidecar itself. First use downloads the model (~1.6 GB). The tray shows sidecar status and has a "Restart local model" item.
+On Windows, use `.venv\Scripts\pip` for the final command. Select **Whisper Local (GPU)** or **Granite 4.1 Local** from the tray; STT-Go starts and manages the sidecar. The first Whisper use downloads a model of about 1.6 GB. The repository's recorded Apple Silicon run transcribed a 6.6-second sample with a 0.210-second warm pass; hardware and audio length will change that result.
 
 ## Configuration
 
-Config lives in `config.json` — `~/Library/Application Support/STT-Go/` on macOS, next to the exe on Windows. Created on first run; see [`config.example.json`](config.example.json).
+`config.json` is created on first run. It lives in `~/Library/Application Support/STT-Go/` on macOS and next to the executable on Windows. See [`config.example.json`](config.example.json).
 
-| Field | Purpose |
-|---|---|
-| `hotkey` | macOS push-to-talk modifier: `ctrl` (default), `option`, `cmd`, `shift`, `fn`, or `left_`/`right_` variants. Ignored on Windows (Right-Alt). |
-| `tap_toggle` | macOS: a bare tap of the hotkey toggles recording on/off (default `true`). Hold-to-talk always works. |
-| `default_backend` | `deepgram`, `elevenlabs`, `elevenlabs_batch`, `api` (OpenAI REST), `whisper_stream`, `whisper_realtime`, `whisper_live`, `groq`, or `whisper_local` |
-| `keyterms` | Vocabulary hints fed to Deepgram keyterms and the Whisper prompt |
-| `replacements` | `from → to` fixes applied after transcription, before typing |
-| `streaming_mode` | Type text live as you speak, when the backend supports it |
-| `api_keys` | `deepgram`, `openai`, `elevenlabs`, `groq` |
-| `mic_device` | Saved microphone name; empty = system default. Also settable from the tray. |
+| Field | Purpose | Default |
+|---|---|---|
+| `default_backend` | Backend selected at startup | `deepgram` |
+| `language` | Language code passed to the backend | `en` |
+| `hotkey` | macOS modifier: `ctrl`, `option`, `cmd`, `shift`, `fn`, or a `left_`/`right_` variant; ignored on Windows | `ctrl` |
+| `tap_toggle` | Let a bare hotkey tap start or stop recording on macOS | `true` |
+| `mic_device` | Saved microphone name; empty uses the system default | empty |
+| `keyterms` | Vocabulary hints for Deepgram and Whisper prompts | developer vocabulary list |
+| `granite_keyterms` | Short vocabulary list for local Granite | empty |
+| `replacements` | Case-insensitive `from → to` corrections applied before typing | bundled common corrections |
+| `streaming_mode` | Type OpenAI realtime transcription while speaking | `false` |
+| `realtime_model` | OpenAI realtime transcription model | `gpt-4o-mini-transcribe` |
+| `groq_model` | Groq transcription model | `whisper-large-v3` |
+| `local_whisper_url` | Local sidecar transcription endpoint | `http://127.0.0.1:5111/transcribe` |
+| `local_whisper_python` | Python executable used for the sidecar | auto-detected |
+| `local_whisper_script` | Sidecar server script | bundled `sidecar/server.py` |
+| `api_keys` | `deepgram`, `openai`, `elevenlabs`, and `groq` credentials | empty |
 
-CLI flags: `--setup` (wizard), `--backend <name>` and `--language <code>` (one-run overrides), `--no-tray`.
+One-run overrides are available through `--backend <name>`, `--language <code>`, and `--no-tray`.
 
 ## Troubleshooting
 
-- **Nothing happens on the hotkey** — check `stt-go.log` for `[KEY]` lines; on macOS re-check Input Monitoring after any rebuild.
-- **`auth_error` in the log** — key missing or wrong; re-run `--setup`.
-- **Logs** — `stt-go.log` in the data dir, rotated at 5 MB. Grep tags: `[KEY]` `[REC]` `[DG]` `[RACE]` `[STT]` `[TYPE]` `[CFG]`.
+| Problem | Check |
+|---|---|
+| The hotkey does nothing | Look for `[KEY]` entries in `stt-go.log`. On macOS, re-check Input Monitoring after rebuilding the binary. |
+| Recording works but text is not inserted | On macOS, grant Accessibility access to the terminal or launcher. Keep the destination window focused when recording starts. |
+| An `auth_error` appears | Re-run `--setup` or verify the selected backend's key in `config.json`, the environment, or `~/.env.local`. |
+| Local transcription does not start | Confirm the sidecar virtual environment is installed, then use **Restart local model** from the tray. |
+| A cloud request fails | Check `[RACE]`, `[RETRY]`, and `[STT]` lines. Failed race audio is retained in `failed-audio/` for seven days. |
 
-Internals (architecture, per-file map, race logic) are in [CLAUDE.md](CLAUDE.md).
+Logs are written to `stt-go.log` in the application data directory and rotate at 5 MB. Useful tags include `[KEY]`, `[REC]`, `[RACE]`, `[RETRY]`, `[STT]`, `[TYPE]`, and `[CFG]`.
 
-## Contributing
+## Roadmap and contributing
 
-Bug reports and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md).
+Roadmap work is tracked in [GitHub Issues](https://github.com/Msparihar/stt-go/issues). Bug reports and pull requests are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md) first.
 
 ## License
 
